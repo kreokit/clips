@@ -882,6 +882,124 @@ mod tests {
         assert!(whisper.calls.borrow().is_empty());
     }
 
+    /// The whole pipeline on fixtures/en/long.mp4 (10:32, two voices): real ffmpeg and
+    /// Whisper Base, cancelled in part 2 and resumed, then compared with an uninterrupted
+    /// run. Needs ffmpeg and the base model; takes minutes:
+    /// `cargo test transcribes_the_long_fixture -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn transcribes_the_long_fixture_in_parts() {
+        use crate::chunks::LIMITS;
+        use crate::transcribe::tests::base_engine;
+
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/en");
+        let path = fixtures.join("long.mp4");
+        let reference = fs::read_to_string(fixtures.join("long.txt")).unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        let video = Video {
+            size: meta.len(),
+            mtime_ms: 1,
+            duration_ms: crate::probe::probe_video(&path).unwrap().duration_ms,
+        };
+        let audio = || AudioStream::open(&path).unwrap();
+        let text = |t: &Transcript| {
+            t.segments
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        // Cancelled as soon as part 2 starts.
+        let dir = temp_dir("long");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = cancel.clone();
+        let started = Instant::now();
+        let err = run(
+            &dir,
+            &settings(),
+            &video,
+            &LIMITS,
+            &mut audio(),
+            || Ok(base_engine()),
+            &cancel,
+            move |p| {
+                if p.part >= 2 && p.stage == Stage::Transcribing {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, CANCELLED);
+        assert_eq!(finished_parts(&dir, &settings(), &video, &LIMITS), 1);
+        println!("part 1 and the cancel took {:.0?}", started.elapsed());
+
+        // Resumed.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let progress = log.clone();
+        let started = Instant::now();
+        let resumed = run(
+            &dir,
+            &settings(),
+            &video,
+            &LIMITS,
+            &mut audio(),
+            || Ok(base_engine()),
+            &cancel,
+            move |p| progress.lock().unwrap().push(p),
+        )
+        .unwrap();
+        println!("the resumed parts took {:.0?}", started.elapsed());
+        let log = log.lock().unwrap();
+        let parts = log.last().unwrap().parts;
+        assert!(parts >= 2, "{parts} parts");
+        assert!(
+            log.iter().all(|p| p.part >= 2),
+            "part 1 came from the cache"
+        );
+        assert!(
+            log.iter().any(|p| p.eta_ms.is_some()),
+            "a time left was shown"
+        );
+
+        let t = &resumed.transcript;
+        let wer = crate::wer::word_error_rate(&reference, &text(t));
+        println!(
+            "{parts} parts, language {}, WER (base) {wer:.3}",
+            t.language
+        );
+        assert_eq!(t.language, "en");
+        assert!(wer < 0.15, "WER {wer:.3} is too high");
+        let mut last = 0;
+        for w in t.segments.iter().flat_map(|s| &s.words) {
+            assert!(w.start_ms >= last && w.end_ms >= w.start_ms, "{w:?}");
+            last = w.end_ms;
+        }
+        assert!(last <= video.duration_ms);
+        assert!(
+            resumed
+                .loudness
+                .len()
+                .abs_diff(video.duration_ms as usize / 1000)
+                <= 1
+        );
+
+        // An uninterrupted run gives the same text.
+        let whole = run(
+            &temp_dir("long-whole"),
+            &settings(),
+            &video,
+            &LIMITS,
+            &mut audio(),
+            || Ok(base_engine()),
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(text(&whole.transcript), text(t));
+    }
+
     #[test]
     fn estimates_time_left_from_the_measured_speed() {
         // 60 s of audio took 30 s: 120 s left take 60 s.

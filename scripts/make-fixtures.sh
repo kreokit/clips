@@ -7,8 +7,7 @@
 #
 #   hello   plain English, for probe, accuracy and timing tests (same clip as KreoKit Captions)
 #   brands  made-up names, for the custom-words test (same clip as KreoKit Captions)
-#
-# Longer synthetic videos (10+ minutes, for transcription chunking) come with milestone 2.
+#   long    a 10.5-minute interview, two voices, from long-script.txt (transcription in parts)
 set -euo pipefail
 
 cd "$(dirname "$0")/../fixtures/en"
@@ -49,3 +48,60 @@ Every video deserves clear and accurate captions."
 
 make_clip brands "Welcome back to KreoKit. Today Zylvana and Morvelle show how Quillhaven \
 makes captions."
+
+# The long interview: each line of long-script.txt spoken by its voice (H: Samantha,
+# G: Daniel; 170 words a minute), a short gap after every turn (0.4–1.0 s, varying), and "PAUSE n" silences.
+# 1 fps picture and 32 kbit/s audio keep the file small enough for git.
+make_long() {
+  local name="long"
+  if [[ -f "$name.mp4" && "$FORCE" != "--force" ]]; then
+    echo "kept fixtures/en/$name.mp4"
+    return
+  fi
+  local tmp i=0 line voice text gap
+  tmp="$(mktemp -d)"
+  : > "$tmp/list.txt"
+  : > "$name.txt"
+  silence() { ffmpeg -nostdin -y -v error -f lavfi -i anullsrc=r=22050:cl=mono -t "$1" "$2"; }
+  while IFS= read -r line; do
+    case "$line" in
+      "" | "#"*) continue ;;
+      "PAUSE "*) silence "${line#PAUSE }" "$tmp/$i.wav" ;;
+      "H: "* | "G: "*)
+        [[ "$line" == H:* ]] && voice="$VOICE" || voice="Daniel"
+        text="${line:3}"
+        echo "$text" >> "$name.txt"
+        say -v "$voice" -r 170 -o "$tmp/$i.aiff" "$text"
+        ffmpeg -nostdin -y -v error -i "$tmp/$i.aiff" -ar 22050 -ac 1 "$tmp/$i-speech.wav"
+        gap="0.$((4 + (i % 4) * 2))"
+        silence "$gap" "$tmp/$i-gap.wav"
+        printf "file '%s'\n" "$i-speech.wav" "$i-gap.wav" >> "$tmp/list.txt"
+        i=$((i + 1))
+        continue
+        ;;
+      *) echo "unknown line in long-script.txt: $line" >&2; exit 1 ;;
+    esac
+    echo "file '$i.wav'" >> "$tmp/list.txt"
+    i=$((i + 1))
+  done < long-script.txt
+
+  ffmpeg -nostdin -y -v error -f concat -safe 0 -i "$tmp/list.txt" -c copy "$tmp/speech.wav"
+  # -shortest overshoots by seconds at 1 fps, so cut both streams at the audio's length
+  # (1 s lead-in + speech + 1 s tail).
+  local seconds
+  seconds=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$tmp/speech.wav")
+  seconds=$(echo "$seconds + 2" | bc)
+  ffmpeg -nostdin -y -v error \
+    -f lavfi -i "color=c=0x1e1e28:s=640x360:r=1" \
+    -i "$tmp/speech.wav" \
+    -filter_complex "[1:a]adelay=1000:all=1,apad=pad_dur=1[a]" \
+    -map 0:v -map "[a]" -t "$seconds" \
+    -c:v "$encoder" -b:v 20k -pix_fmt yuv420p \
+    -c:a aac -b:a 32k -ac 1 -ar 22050 \
+    -movflags +faststart \
+    "$name.mp4"
+  rm -rf "$tmp"
+  echo "wrote fixtures/en/$name.mp4 ($(du -h "$name.mp4" | cut -f1)) with $encoder"
+}
+
+make_long

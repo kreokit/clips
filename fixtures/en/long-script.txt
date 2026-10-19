@@ -1,0 +1,86 @@
+# Script for fixtures/en/long.mp4 (written for KreoKit, MIT OR Apache-2.0).
+# H: host (voice Samantha), G: guest (voice Daniel), PAUSE n: n seconds of silence.
+# Blank lines and lines starting with # are ignored. scripts/make-fixtures.sh speaks it.
+H: Welcome back to the Workshop Hour. Today I am talking with a furniture maker who left an office job eight years ago to build tables in a small barn. Thanks for coming in.
+G: Thank you for having me. It is a pleasure to be here, and I promise not to bring any sawdust into the studio.
+H: Let us start at the beginning. What made you leave a steady job?
+G: Honestly, it was a chair. My grandfather built a kitchen chair in nineteen fifty two, and it was still in my parents' house, still solid, still used every single day. I was writing reports that nobody read after a week. That chair had been useful for seventy years.
+H: So you wanted to make things that last.
+G: Exactly. I wanted to make something that would still matter after I stopped thinking about it.
+H: But you did not just quit on a Monday, did you?
+G: No, and that is the first thing I tell anyone who asks. I spent two years working in the evenings and at weekends. I sold my first eleven pieces to friends and neighbours before I ever handed in my notice.
+H: Eleven pieces. What were they?
+G: Mostly small things. Cutting boards, two bookshelves, a coffee table that wobbled. I gave the wobbly one to my sister, and she still reminds me about it.
+H: Here is a question a lot of our listeners send in. How much money do you need to start a workshop like yours?
+G: Less than people think, and more than they hope. My first year I spent about four thousand dollars on tools. The mistake most beginners make is buying a big machine before they know what they actually need.
+H: What should they buy first?
+G: A good hand saw, a few sharp chisels, a sturdy bench, and clamps. You can never have too many clamps. Everything else can wait until a real project asks for it.
+PAUSE 5
+H: Let us talk about the barn. How did you find it?
+G: Pure luck. A farmer near our village was retiring and the building was empty. We agreed on a low rent if I repaired the roof. It took me a whole summer, but the roof has not leaked since.
+H: What does a normal day look like for you now?
+G: I start at seven with coffee and a list. The first hour is for the boring work, answering emails, ordering timber, sending invoices. After that the phone goes into a drawer and I build until about four in the afternoon.
+H: You put the phone in a drawer?
+G: I do. The secret to getting anything done in a workshop is long stretches without interruptions. A dovetail joint does not forgive you if you look away to read a message.
+H: Tell us about the timber. Where does your wood come from?
+G: Almost all of it comes from within fifty miles. Oak, ash, cherry and walnut, mostly from trees that came down in storms or were cleared for building work. I buy from two small sawmills that dry the wood slowly.
+H: Why does slow drying matter?
+G: Wood that dries too fast cracks and twists later. If you are building a table that should last a hundred years, you cannot rush the very first step.
+H: What is the most difficult piece you have ever made?
+G: A round dining table for a family of nine. The top was almost two metres across, made from twelve boards of walnut. Getting it perfectly flat took longer than building everything else.
+H: How long did the whole table take?
+G: Seven weeks. The family came to collect it on a rainy Saturday, and the youngest child crawled underneath to look at the joints. That was the best review I have ever had.
+PAUSE 5
+H: You also teach now. When did that start?
+G: About three years ago. People kept asking if they could watch me work, so I started a weekend class for four students at a time. Now it is my favourite part of the month.
+H: What do beginners struggle with the most?
+G: Patience, without a doubt. Everyone wants to see a finished piece on the first day. I make them spend the whole first morning just sharpening a chisel properly.
+H: That sounds frustrating.
+G: It is, for about two hours. Then they cut through a piece of oak like it is butter, and suddenly they understand. A sharp tool is safer, faster and more fun.
+H: Do you think anyone can learn this craft?
+G: I really do. I have taught a retired nurse, a teenager who was bored at school, and a software engineer who said he had never held a hammer. All three built a small stool by Sunday evening.
+H: What is the biggest mistake you see people make when they sell their work?
+G: Charging too little. People count the cost of the wood and forget their own hours. If a table takes you sixty hours, those sixty hours are part of the price.
+H: How did you learn that?
+G: The hard way. In my first year I calculated that I was earning less than three dollars an hour. My partner sat me down with a spreadsheet and we had a very honest conversation.
+H: And what changed after that conversation?
+G: I raised my prices, I made fewer pieces, and I started writing a small card for every customer about the wood, where the tree grew and how the piece was made. People were happy to pay more because they understood the work.
+PAUSE 5
+H: Let us talk about social media. Do you share your work online?
+G: I share short videos of the process, maybe two a week. Planing a board, fitting a joint, oiling a finished top. Those quiet videos do better than anything I could plan.
+H: Why do you think people enjoy them?
+G: I think they are calming. Most of our day is noise. Watching a curl of wood come off a plane is the opposite of noise.
+H: Has that brought you customers?
+G: More than I expected. About half of my commissions last year came from people who first saw a video. One couple drove four hours to visit the barn because they wanted to meet the person behind the shavings.
+H: What would you say to someone listening who is stuck in a job they do not love?
+G: Start small and start now. You do not have to quit anything to begin. Build one thing this month, finish it, and give it to someone. Then build another.
+H: That is good advice for almost anything.
+G: I think so too. The truth is that confidence comes after the work, not before it.
+PAUSE 5
+H: I want to go back to something you said earlier. You mentioned writing a card for every customer. What goes on that card?
+G: Three things. The kind of wood, the place the tree grew, and one sentence about something that went wrong while I was building the piece.
+H: Something that went wrong? Why would you tell a customer that?
+G: Because it is true, and because people love it. A table is not made by a machine that never makes mistakes. When someone reads that the left leg was cut twice because I measured from the wrong side, they smile, and they trust the rest of the card.
+H: That is a surprising way to build trust.
+G: It surprised me too. The first time I wrote one, I almost threw it away. Now customers ask to read the card before they even look at the joints.
+H: How do you decide what to build next when there are no commissions?
+G: I keep a notebook of ideas, and every winter I pick three of them. Last winter it was a writing desk, a cradle and a set of wooden spoons. The spoons sold out in a week, which taught me something about what people can afford.
+H: What did it teach you?
+G: That not everyone can buy a dining table, but almost everyone can buy a spoon. Small pieces let more people own something handmade, and some of them come back years later for the table.
+H: Do you ever worry that the craft will disappear?
+G: Less than I used to. Ten years ago I could count the young furniture makers in our county on one hand. Now there are at least twenty, and several of them started in my weekend class.
+H: That must feel good.
+G: It feels wonderful. One of my former students opened her own workshop last autumn, about thirty miles north of us. She sends me photos of her joints, and to be honest, some of them are better than mine.
+H: What is one tool you could not live without?
+G: My grandfather's marking gauge. It is a simple piece of beech with a steel pin, and it draws a perfect line parallel to an edge. Every project I have ever made started with that gauge.
+H: Is it the same grandfather who built the kitchen chair?
+G: The very same. The chair and the gauge are the two things I would save if the barn caught fire, right after the cat.
+H: You have a workshop cat?
+G: Her name is Shaving. She sleeps on the warm lid of the dust collector and supervises every customer who visits.
+H: Before we finish, what are you working on right now?
+G: A set of six chairs for a library. Each chair uses a different local wood, so readers can feel the difference between oak and cherry while they sit. It is my most ambitious project so far.
+H: When will they be finished?
+G: If the timber behaves, by the end of spring. If it does not, ask me again in summer.
+H: Thank you so much for joining us today. Where can people see your work?
+G: The easiest way is to visit the barn on the first Saturday of every month. The kettle is always on, and there is usually a wobbly stool for sale at a very fair price.
+H: That is all for this episode of the Workshop Hour. Thanks for listening, and see you next week.
