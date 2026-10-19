@@ -1,18 +1,20 @@
-/* The open project (milestone 1: what the probe found). */
+/* The open project: what the probe found, then the Processing steps. */
 
 .project-main {
   overflow-y: auto;
   padding: var(--space-8);
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
 }
 
 .project-card {
   width: 100%;
   max-width: 880px;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  align-items: start;
   gap: var(--space-6);
   padding: var(--space-6);
   background: var(--color-surface-1);
@@ -60,9 +62,92 @@
   white-space: nowrap;
 }
 
-.project-next {
-  margin-top: auto;
-  padding-top: var(--space-3);
+/* A Processing step (Transcribe now). */
+
+.panel {
+  width: 100%;
+  max-width: 880px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.panel-head .panel-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.panel-meta {
+  color: var(--color-text-3);
+}
+
+.panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+.transcribe-form,
+.transcribe-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 560px;
+}
+
+.transcribe-progress {
+  gap: var(--space-2);
+}
+
+.transcribe-label {
+  font-weight: 600;
+}
+
+.transcribe-detail,
+.transcribe-note {
+  margin: 0;
+  color: var(--color-text-3);
+}
+
+.transcribe-error {
+  margin: 0;
+  color: var(--color-danger);
+}
+
+.transcript-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 480px;
+  overflow-y: auto;
   border-top: 1px solid var(--color-border);
+}
+
+.transcript-list li {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.transcript-time {
   color: var(--color-text-3);
 }

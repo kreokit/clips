@@ -1,21 +1,33 @@
+import { useCallback, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { describeShape, fileName, formatBytes, formatDuration, formatFps } from "../lib/projects";
 import { closeProject, useProject } from "../store/project";
-import { Button, TextInput } from "../ui";
+import { cancelJob } from "../lib/transcription";
+import { Button, Dialog, TextInput } from "../ui";
 import { Thumbnail } from "./Thumbnail";
+import { TranscribePanel } from "./TranscribePanel";
 import { TopBar } from "./TopBar";
 import "../styles/project.css";
 
 /**
- * The open project. Milestone 1 shows what the probe found; transcription and the clips
- * board replace this in milestones 2 and 3.
+ * The open project: what the probe found, then the Processing steps (transcription now;
+ * the moment finder and clips board come with milestone 3).
  */
 export function ProjectView() {
   const project = useProject((s) => s.project);
   const update = useProject((s) => s.update);
+  const [running, setRunning] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const onRunningChange = useCallback((r: boolean) => setRunning(r), []);
   if (!project) return null;
   const { video } = project;
-  const home = () => void closeProject();
+  // Leaving while transcribing asks first; finished parts are kept either way.
+  const home = () => (running ? setConfirmLeave(true) : void closeProject());
+  const leave = async () => {
+    setConfirmLeave(false);
+    await cancelJob();
+    void closeProject();
+  };
 
   return (
     <div className="screen">
@@ -60,10 +72,28 @@ export function ProjectView() {
                 {fileName(project.video_path)} · {formatBytes(project.video_size)}
               </dd>
             </dl>
-            <p className="project-next">Next: transcribe the video and find the best moments (coming in the next build).</p>
           </div>
         </div>
+        <TranscribePanel project={project} onRunningChange={onRunningChange} />
       </main>
+      {confirmLeave && (
+        <Dialog
+          title="Stop transcribing?"
+          onClose={() => setConfirmLeave(false)}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmLeave(false)}>
+                Keep going
+              </Button>
+              <Button variant="primary" onClick={() => void leave()}>
+                Stop and go Home
+              </Button>
+            </>
+          }
+        >
+          <p>The parts finished so far are kept. Open this video again and choose Resume to carry on.</p>
+        </Dialog>
+      )}
     </div>
   );
 }
