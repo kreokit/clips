@@ -8,6 +8,7 @@ mod models;
 mod probe;
 mod projects;
 mod transcribe;
+mod transcription;
 mod vad;
 mod wer;
 
