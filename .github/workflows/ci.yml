@@ -15,11 +15,10 @@ jobs:
   linux:
     name: Linux tests and licence checks
     runs-on: ubuntu-22.04
-    env:
-      # The Whisper tests find the base model in <KREOKIT_APP_DATA>/models.
-      KREOKIT_APP_DATA: ${{ runner.temp }}/com.kreokit.clips
     steps:
       - uses: actions/checkout@v4
+      # The Whisper tests find the base model in <KREOKIT_APP_DATA>/models.
+      - run: echo "KREOKIT_APP_DATA=$RUNNER_TEMP/com.kreokit.clips" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v4
         with:
           version: 10

@@ -443,7 +443,10 @@ pub(crate) mod tests {
     fn resolve_never_checks_our_own_files() {
         let dirs = temp_dirs("resolve");
         let cancel = AtomicBool::new(false);
-        assert_eq!(resolve(WhisperModel::Base, &dirs, &cancel, |_| {}), Ok(None));
+        assert_eq!(
+            resolve(WhisperModel::Base, &dirs, &cancel, |_| {}),
+            Ok(None)
+        );
         fake(&dirs.ours, WhisperModel::Base);
         assert_eq!(
             resolve(WhisperModel::Base, &dirs, &cancel, |_| panic!("checked")),
@@ -451,7 +454,10 @@ pub(crate) mod tests {
         );
         // A same-sized fake in Captions' folder fails the checksum and isn't used.
         fake(dirs.captions.as_ref().unwrap(), WhisperModel::Small);
-        assert_eq!(resolve(WhisperModel::Small, &dirs, &cancel, |_| {}), Ok(None));
+        assert_eq!(
+            resolve(WhisperModel::Small, &dirs, &cancel, |_| {}),
+            Ok(None)
+        );
     }
 
     #[test]
@@ -464,9 +470,8 @@ pub(crate) mod tests {
         let checks = dir.join("ours").join("shared-checked.json");
         let cancel = AtomicBool::new(false);
         let mut hashed = 0;
-        let mut check = |sha: &str| {
-            check_shared(&shared, 11, sha, &checks, &cancel, |_| hashed += 1).unwrap()
-        };
+        let mut check =
+            |sha: &str| check_shared(&shared, 11, sha, &checks, &cancel, |_| hashed += 1).unwrap();
 
         assert!(!check(&"0".repeat(64)));
         assert!(!checks.exists(), "a failed check isn't remembered");
@@ -481,8 +486,15 @@ pub(crate) mod tests {
             "nothing is written next to the shared file"
         );
 
-        // A changed file is checked again.
+        // A changed file is checked again. (Set the time: on Linux a quick rewrite can keep
+        // the same modification time.)
         fs::write(&shared, b"hello mode!").unwrap();
+        File::options()
+            .write(true)
+            .open(&shared)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+            .unwrap();
         assert!(!check_shared(&shared, 11, &sha, &checks, &cancel, |_| {}).unwrap());
         // A wrong size fails without reading.
         assert!(!check_shared(&shared, 12, &sha, &checks, &cancel, |_| panic!()).unwrap());
@@ -547,7 +559,9 @@ pub(crate) mod tests {
     #[ignore]
     fn reuses_captions_base_model() {
         let real = dev_dirs();
-        let Some(captions) = real.captions else { return };
+        let Some(captions) = real.captions else {
+            return;
+        };
         if !WhisperModel::Base.path_in(&captions).exists() {
             eprintln!("no Captions base model here; skipped");
             return;

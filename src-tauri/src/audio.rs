@@ -110,7 +110,10 @@ impl AudioStream {
         if stderr.contains("does not contain any stream") {
             return Err("this video has no audio track".into());
         }
-        Err(format!("ffmpeg could not read the audio: {}", stderr.trim()))
+        Err(format!(
+            "ffmpeg could not read the audio: {}",
+            stderr.trim()
+        ))
     }
 }
 
@@ -217,7 +220,9 @@ pub(crate) mod tests {
     }
 
     fn fixture(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/en").join(name)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/en")
+            .join(name)
     }
 
     /// Needs FFmpeg: `cargo test -- --ignored`.
@@ -235,7 +240,10 @@ pub(crate) mod tests {
             .duration_ms as f64
             / 1000.0;
         assert!((seconds - probed).abs() < 0.1, "{seconds} s vs {probed} s");
-        assert!(samples.iter().any(|s| s.abs() > 0.05), "audio is not silent");
+        assert!(
+            samples.iter().any(|s| s.abs() > 0.05),
+            "audio is not silent"
+        );
     }
 
     #[test]

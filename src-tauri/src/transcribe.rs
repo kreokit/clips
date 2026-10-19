@@ -456,14 +456,15 @@ pub(crate) mod tests {
     /// The base model, from Clips' models folder or Captions' (`models::tests::dev_dirs`).
     pub(crate) fn base_engine() -> Engine {
         let dirs = crate::models::tests::dev_dirs();
-        let path = crate::models::resolve(WhisperModel::Base, &dirs, &AtomicBool::new(false), |_| {})
-            .unwrap()
-            .unwrap_or_else(|| {
-                panic!(
-                    "base model missing: put ggml-base.bin into {} (or set KREOKIT_APP_DATA)",
-                    dirs.ours.display()
-                )
-            });
+        let path =
+            crate::models::resolve(WhisperModel::Base, &dirs, &AtomicBool::new(false), |_| {})
+                .unwrap()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "base model missing: put ggml-base.bin into {} (or set KREOKIT_APP_DATA)",
+                        dirs.ours.display()
+                    )
+                });
         Engine::load(WhisperModel::Base, &path).unwrap()
     }
 
@@ -723,16 +724,16 @@ pub(crate) mod tests {
         let run = |prompt: Option<&str>| {
             let t = engine
                 .transcribe(
-                &samples,
-                Options {
-                    language: Some("en"),
-                    hide_non_speech: true,
-                    prompt,
-                },
-                &Arc::new(AtomicBool::new(false)),
-                |_| {},
-            )
-            .unwrap();
+                    &samples,
+                    Options {
+                        language: Some("en"),
+                        hide_non_speech: true,
+                        prompt,
+                    },
+                    &Arc::new(AtomicBool::new(false)),
+                    |_| {},
+                )
+                .unwrap();
             t.segments
                 .iter()
                 .map(|s| s.text.as_str())
@@ -781,16 +782,17 @@ pub(crate) mod tests {
 
         let samples = crate::audio::tests::read_all(&fixtures.join("hello.mp4"));
         let started = std::time::Instant::now();
-        let transcript = engine.transcribe(
-            &samples,
-            Options {
-                hide_non_speech: true,
-                ..Options::default()
-            },
-            &Arc::new(AtomicBool::new(false)),
-            |_| {},
-        )
-        .unwrap();
+        let transcript = engine
+            .transcribe(
+                &samples,
+                Options {
+                    hide_non_speech: true,
+                    ..Options::default()
+                },
+                &Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .unwrap();
         let elapsed = started.elapsed();
 
         let hypothesis: Vec<&str> = transcript

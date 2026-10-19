@@ -62,7 +62,8 @@ pub fn next_cut(buffer: &[f32], at_end: bool, limits: &Limits) -> Option<usize> 
         }
         let better = best.is_none_or(|(best_len, best_mid)| {
             len > best_len
-                || (len == best_len && middle.abs_diff(target_frame) < best_mid.abs_diff(target_frame))
+                || (len == best_len
+                    && middle.abs_diff(target_frame) < best_mid.abs_diff(target_frame))
         });
         if better {
             best = Some((len, middle));
@@ -96,8 +97,7 @@ mod tests {
             .iter()
             .flat_map(|&(ms, amp)| {
                 (0..ms_to_samples(ms)).map(move |i| {
-                    amp * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / SAMPLE_RATE as f32)
-                        .sin()
+                    amp * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / SAMPLE_RATE as f32).sin()
                 })
             })
             .collect()
@@ -151,7 +151,13 @@ mod tests {
 
     #[test]
     fn ignores_pauses_outside_the_window() {
-        let audio = speech(&[(2_300, 0.5), (1_000, 0.0), (1_700, 0.5), (800, 0.0), (500, 0.5)]);
+        let audio = speech(&[
+            (2_300, 0.5),
+            (1_000, 0.0),
+            (1_700, 0.5),
+            (800, 0.0),
+            (500, 0.5),
+        ]);
         // 3–4 s is too early; 5.7–6.5 s starts after the window: cut at the target.
         assert_eq!(cut_ms(&audio), 5_000);
     }
