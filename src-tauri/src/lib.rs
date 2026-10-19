@@ -1,6 +1,7 @@
 //! KreoKit Clips: long video → vertical short clips with captions, offline.
 
 mod audio;
+mod chunks;
 mod cpu;
 mod ffmpeg;
 mod models;
