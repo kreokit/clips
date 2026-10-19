@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-20):** Milestone 1 (Scaffold) is done and tested. Next: milestone 2 (transcribe long videos), plan awaiting approval.
+**Status (2026-10-20):** Milestone 1 (Scaffold) is done and tested. Milestone 2 (transcribe long videos) is in progress; plan approved 2026-10-20.
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -15,7 +15,7 @@ Target users: creators worldwide who repurpose long content for TikTok, Reels an
 
 - **No proprietary code or assets.** Build only from public docs, open-source libraries and observed behaviour. Never copy another product's name, logo, icons or exact UI.
 - **Offline first.** No servers, no accounts, no telemetry, no cloud AI APIs. The only network calls are one-time model downloads from our own mirror releases.
-- **Licences must stay MIT/Apache-compatible, including model weights.** Only MIT / Apache-2.0 / BSD weights. Verify every model's license from its official source before adding it; never use non-commercial or research-only weights. Record everything in `THIRD-PARTY-LICENSES.md`. Mirror model files in a `models-v1` release on `kreokit/clips` with license + SOURCE.md + SHA256SUMS.
+- **Licences must stay MIT/Apache-compatible, including model weights.** Only MIT / Apache-2.0 / BSD weights. Verify every model's license from its official source before adding it; never use non-commercial or research-only weights. Record everything in `THIRD-PARTY-LICENSES.md`. Mirror model files in `models-vN` releases on `kreokit/clips` (never change a published one) with license + SOURCE.md + SHA256SUMS.
 - Every commit builds and passes `cargo test` and `pnpm test` on its own. Small topic-based commits.
 - Only screenshot the KreoKit window, never the full screen.
 - Fixtures: only our own or free-licensed videos (Pexels/Pixabay, license noted per file), or synthetic ones (macOS `say` + ffmpeg test patterns).
@@ -63,7 +63,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 ## Reframe
 
-- **Face model (decided 2026-10-19): MediaPipe BlazeFace full-range** (Apache-2.0, clean training data). It ships as TFLite; in M4 convert it to ONNX in a GitHub Actions workflow (reproducible, pinned tool versions, checked against the TFLite output, like Cutout's "Export BiRefNet"), then mirror it in `models-v1` with licence, SOURCE.md and SHA256SUMS. Still verify the licence from the official source and record it in `THIRD-PARTY-LICENSES.md` when adding it.
+- **Face model (decided 2026-10-19): MediaPipe BlazeFace full-range** (Apache-2.0, clean training data). It ships as TFLite; in M4 convert it to ONNX in a GitHub Actions workflow (reproducible, pinned tool versions, checked against the TFLite output, like Cutout's "Export BiRefNet"), then mirror it in `models-v2` (`models-v1` holds the Whisper models and is never changed) with licence, SOURCE.md and SHA256SUMS. Still verify the licence from the official source and record it in `THIRD-PARTY-LICENSES.md` when adding it.
 - **Excluded face models:** YuNet, SCRFD and YOLO-face (training-data / licence risk). Don't revisit without asking.
 - Sample ~2–5 fps, track faces, pick the active speaker (largest/most central face, or the face whose mouth region moves while that segment is spoken when feasible).
 - Smooth the crop path (no jitter; limit speed; hold position during short gaps), keep the face in the upper-middle third.
@@ -98,6 +98,8 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 1. ✅ **Scaffold:** repo from Captions/Cutout foundations, dev port 1440, Home, probe a video.
 2. **Transcribe long videos:** port Captions' pipeline incl. macOS build flags; chunking, progress, cancel, cache; tested on a 10+ minute synthetic video.
+   - Decided 2026-10-20: the three ggml Whisper models (Base, Small, Large-v3-turbo) are mirrored unchanged in `models-v1` on `kreokit/clips` (licence, SOURCE.md, SHA256SUMS); the app downloads only from there. A matching model already in Captions' models folder is used read-only after a SHA-256 check instead of downloading it again. The computer is kept awake only while a job runs (macOS, and Windows via `SetThreadExecutionState`); check the new dependency's licence.
+   - Plan: audio streamed from ffmpeg (no full decode in memory, no WAV on disk) plus a per-second loudness curve for M3; ~5-minute chunks cut at the longest pause between 4:30 and 5:30 (deterministic, so resumable); language detected on the first chunk, then fixed; prompt = custom words + the previous chunk's tail; finished chunks cached in `<project>/transcript/`, invalidated when model/language/custom words/sound-tag setting/video change.
 3. **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips.
 4. **Reframe:** BlazeFace full-range converted to ONNX in Actions (license verified, mirrored), detection + tracking + smoothing, crop modes, preview.
 5. **Captions + export all:** reuse styles/layout/ASS/burn-in on the 9:16 output, batch export with safe writing.
@@ -109,6 +111,10 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 - Moment finder: unit tests on synthetic transcripts (never cuts mid-sentence, respects min/max length, hook/energy features change the ranking as expected).
 - Reframe: synthetic video with a moving face-like target or a free-licensed talking-head clip; the crop keeps the target inside the frame; the crop path is smooth (bounded speed/jerk).
 - Export: every clip is exactly 1080×1920, duration matches in/out, captions burned at the expected position, N clips → N files, no overwrites.
+
+## Backlog
+
+- **One shared KreoKit models folder** for all apps (for the future Hub), instead of each app's own folder plus Clips' read-only reuse of Captions' models.
 
 ## Dev environment
 

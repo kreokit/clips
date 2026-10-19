@@ -1,0 +1,92 @@
+# Mirrors the ggml Whisper models, unchanged, into the `models-v1` release on this repo, so
+# the app downloads only from our own release and checks each file against a pinned SHA-256
+# (CLAUDE.md "Hard rules"). Run it once by hand; a published release is never changed, so
+# the job refuses to run if the tag already exists (publish `models-v2` instead).
+name: Mirror Whisper models
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TAG: models-v1
+  # Hugging Face ggerganov/whisper.cpp, the revision the files and checksums were checked at.
+  HF_REVISION: 5359861c739e955e79d9a303bcbc70fb988958b1
+  # Licence files at fixed commits: OpenAI's weights and whisper.cpp's conversion.
+  WHISPER_COMMIT: 86098128c0b4f24f0e2aa2994de830614b474227
+  WHISPER_CPP_COMMIT: 231638a0717b7822784297e5980965ffcec05810
+
+jobs:
+  mirror:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Refuse to change a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists; publish a new models-vN instead"
+            exit 1
+          fi
+
+      - name: Download and verify the models
+        run: |
+          set -euo pipefail
+          mkdir out && cd out
+          # name, size in bytes, SHA-256 (same values as src-tauri/src/models.rs)
+          while read -r name size sha; do
+            curl -fL --retry 3 -o "$name" \
+              "https://huggingface.co/ggerganov/whisper.cpp/resolve/$HF_REVISION/$name"
+            test "$(stat -c %s "$name")" = "$size"
+            echo "$sha  $name" | sha256sum -c -
+          done <<'EOF'
+          ggml-base.bin 147951465 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+          ggml-small.bin 487601967 1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b
+          ggml-large-v3-turbo.bin 1624555275 1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69
+          EOF
+
+      - name: Licences and source note
+        run: |
+          set -euo pipefail
+          cd out
+          curl -fL -o whisper-weights.LICENSE.txt \
+            "https://raw.githubusercontent.com/openai/whisper/$WHISPER_COMMIT/LICENSE"
+          curl -fL -o whisper.cpp-conversion.LICENSE.txt \
+            "https://raw.githubusercontent.com/ggml-org/whisper.cpp/$WHISPER_CPP_COMMIT/LICENSE"
+          grep -q "MIT License" whisper-weights.LICENSE.txt
+          grep -q "MIT License" whisper.cpp-conversion.LICENSE.txt
+          cat > whisper-models.SOURCE.md <<EOF
+          # Whisper models (ggml)
+
+          Files: \`ggml-base.bin\`, \`ggml-small.bin\`, \`ggml-large-v3-turbo.bin\`, unchanged.
+
+          - Weights: OpenAI Whisper, © 2022 OpenAI, MIT licence
+            (\`whisper-weights.LICENSE.txt\`). "Whisper's code and model weights are released
+            under the MIT License": https://github.com/openai/whisper/blob/$WHISPER_COMMIT/README.md
+          - ggml conversion: whisper.cpp, © the ggml authors, MIT licence
+            (\`whisper.cpp-conversion.LICENSE.txt\`): https://github.com/ggml-org/whisper.cpp
+          - Downloaded from https://huggingface.co/ggerganov/whisper.cpp at revision
+            \`$HF_REVISION\` (model card licence: mit) and checked against its LFS SHA-256.
+          EOF
+          sha256sum * > ../SHA256SUMS.txt && mv ../SHA256SUMS.txt .
+          cat SHA256SUMS.txt
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          AI models used by **KreoKit Clips**, mirrored unchanged from their original source so the app can download them from one place and check each file against a pinned SHA-256. This is not an app release; get the app from the other releases.
+
+          | File | Used for | Size | Licence |
+          |---|---|---|---|
+          | `ggml-base.bin` | Transcription, Fast | 148 MB | MIT |
+          | `ggml-small.bin` | Transcription, Balanced | 488 MB | MIT |
+          | `ggml-large-v3-turbo.bin` | Transcription, Most accurate | 1.6 GB | MIT |
+
+          Source and attribution: `whisper-models.SOURCE.md`. Licence texts: `whisper-weights.LICENSE.txt` (OpenAI Whisper weights) and `whisper.cpp-conversion.LICENSE.txt` (ggml conversion). Checksums for every file are in `SHA256SUMS.txt`.
+          EOF
+          gh release create "$TAG" out/* -R "$GITHUB_REPOSITORY" \
+            --title "AI models v1 (mirror)" --notes-file notes.md --latest=false
