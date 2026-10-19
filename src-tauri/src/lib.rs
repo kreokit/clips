@@ -54,6 +54,13 @@ async fn open_video(app: AppHandle, path: String) -> Result<Project, String> {
     .await
 }
 
+/// Opens a project from Home's list.
+#[tauri::command]
+async fn open_project(app: AppHandle, id: String) -> Result<Project, String> {
+    let root = projects_root(&app)?;
+    blocking(move || projects::open(&root, &id, projects::now_ms())).await
+}
+
 /// The autosave: writes the project and returns it with `updated_at` set.
 #[tauri::command]
 async fn save_project(app: AppHandle, project: Project) -> Result<Project, String> {
@@ -118,21 +125,36 @@ fn report_problem(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Development aid: a video to open at startup, from `KREOKIT_DEV_OPEN`. Always `None`
+/// in release builds.
+#[tauri::command]
+fn dev_startup_video() -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var("KREOKIT_DEV_OPEN")
+        .ok()
+        .filter(|p| !p.is_empty())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             probe_video,
             list_projects,
             open_video,
+            open_project,
             save_project,
             locate_video,
             remove_project,
             project_thumbnail,
             cpu_support,
             quit_app,
-            report_problem
+            report_problem,
+            dev_startup_video
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

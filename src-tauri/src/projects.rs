@@ -8,6 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -225,6 +226,16 @@ pub fn open_video(
     Ok(project)
 }
 
+/// Opens a project from Home's list: marks it as just opened.
+pub fn open(root: &Path, id: &str, now: u64) -> Result<Project, String> {
+    let project = Project {
+        opened_at: now,
+        ..load(root, id)?
+    };
+    write_project(&project_dir(root, id)?, &project)?;
+    Ok(project)
+}
+
 /// Points project `id` at its video's new location. Refuses a video that is clearly a
 /// different one (other size on screen, or more than a second longer or shorter).
 pub fn locate_video(
@@ -280,9 +291,14 @@ pub fn thumbnail(root: &Path, id: &str) -> Result<PathBuf, String> {
         return Err("video not found".into());
     }
     let ffmpeg = ffmpeg::locate("ffmpeg")?;
-    let mut tmp = out.as_os_str().to_owned();
-    tmp.push(".tmp.jpg");
-    let tmp = PathBuf::from(tmp);
+    // Requests can overlap (Home and the project screen, React's StrictMode), so each one
+    // writes its own temporary file; whichever finishes first puts it in place.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let tmp = out.with_file_name(format!(
+        "thumbnail-{}-{}.tmp.jpg",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     for seek in ["1", "0"] {
         let ok = Command::new(&ffmpeg)
             .args(["-nostdin", "-v", "error", "-y", "-ss", seek, "-i"])
@@ -292,8 +308,13 @@ pub fn thumbnail(root: &Path, id: &str) -> Result<PathBuf, String> {
             .status()
             .is_ok_and(|s| s.success());
         if ok && tmp.is_file() {
-            fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
-            return Ok(out);
+            let renamed = fs::rename(&tmp, &out);
+            let _ = fs::remove_file(&tmp);
+            return match renamed {
+                Ok(()) => Ok(out),
+                Err(_) if out.is_file() => Ok(out),
+                Err(e) => Err(e.to_string()),
+            };
         }
     }
     let _ = fs::remove_file(&tmp);
@@ -357,6 +378,19 @@ mod tests {
         assert_eq!(again.id, first.id);
         assert_eq!((again.created_at, again.opened_at), (1, 9));
         assert_eq!(list(&root).len(), 1);
+    }
+
+    #[test]
+    fn opening_from_the_list_moves_it_to_the_top() {
+        let (root, video) = setup("open");
+        let other = video.with_file_name("other.mp4");
+        fs::write(&other, b"x").unwrap();
+        let a = open_video(&root, &video, probe_ok, 1).unwrap();
+        open_video(&root, &other, probe_ok, 2).unwrap();
+        let opened = open(&root, &a.id, 3).unwrap();
+        assert_eq!((opened.opened_at, opened.updated_at), (3, 1));
+        assert_eq!(list(&root)[0].project.id, a.id);
+        assert!(open(&root, "0123456789abcdef", 4).is_err());
     }
 
     #[test]
@@ -501,5 +535,24 @@ mod tests {
         let thumb = thumbnail(&root, &p.id).unwrap();
         assert!(fs::metadata(&thumb).unwrap().len() > 0);
         assert_eq!(thumbnail(&root, &p.id).unwrap(), thumb); // cached
+
+        // Overlapping first requests all succeed.
+        fs::remove_file(&thumb).unwrap();
+        let (root, id) = (std::sync::Arc::new(root), p.id);
+        let requests: Vec<_> = (0..4)
+            .map(|_| {
+                let (root, id) = (root.clone(), id.clone());
+                std::thread::spawn(move || thumbnail(&root, &id))
+            })
+            .collect();
+        for request in requests {
+            assert_eq!(request.join().unwrap().unwrap(), thumb);
+        }
+        let leftovers = fs::read_dir(root.join(&id))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
     }
 }

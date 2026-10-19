@@ -1,0 +1,68 @@
+/* The open project (milestone 1: what the probe found). */
+
+.project-main {
+  overflow-y: auto;
+  padding: var(--space-8);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.project-card {
+  width: 100%;
+  max-width: 880px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--space-6);
+  padding: var(--space-6);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.project-thumb {
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-md);
+}
+
+.project-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.project-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.project-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.project-facts dt {
+  color: var(--color-text-3);
+}
+
+.project-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-next {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-3);
+}

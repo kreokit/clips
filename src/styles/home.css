@@ -1,0 +1,164 @@
+/* Home: drop zone and recent projects (from KreoKit Cutout). */
+
+.home {
+  background: var(--color-bg);
+}
+
+.home-brand {
+  flex: 1;
+  font: var(--text-title);
+  font-size: 13px;
+}
+
+.home-main {
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-8) var(--space-12);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+/* Drop zone */
+
+.dropzone {
+  width: 100%;
+  max-width: 880px;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  background: var(--color-surface-1);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.dropzone.dragging {
+  background: var(--color-accent-tint);
+  border: 2px solid var(--color-accent);
+}
+
+.dropzone-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--space-1);
+  background: var(--color-surface-3);
+  border-radius: var(--radius-lg);
+  color: var(--color-text);
+}
+
+.dropzone.dragging .dropzone-icon {
+  color: var(--color-accent);
+}
+
+.dropzone-title {
+  font: var(--text-hero);
+  font-size: 28px;
+  line-height: 36px;
+}
+
+.dropzone-text {
+  max-width: 440px;
+  margin-bottom: var(--space-3);
+  color: var(--color-text-2);
+}
+
+.dropzone .ui-button-primary {
+  height: 40px;
+  padding: 0 var(--space-6);
+  font-size: 14px;
+}
+
+.dropzone-formats {
+  margin-top: var(--space-1);
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+  letter-spacing: 0.02em;
+}
+
+/* Recent projects */
+
+.recent {
+  width: 100%;
+  max-width: 880px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.recent-empty {
+  color: var(--color-text-3);
+}
+
+.recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+.recent-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  text-align: left;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.recent-card:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-2);
+}
+
+.recent-card:disabled {
+  cursor: progress;
+}
+
+/* 16:9, like most long videos. */
+.recent-thumb {
+  aspect-ratio: 16 / 9;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.recent-card.missing .recent-thumb img {
+  opacity: 0.35;
+}
+
+.recent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.recent-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-meta {
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+}
+
+.recent-missing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: var(--text-meta);
+  color: var(--color-warning);
+}
