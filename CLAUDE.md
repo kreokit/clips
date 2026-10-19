@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-20):** Milestone 1 (Scaffold) is done. Next: milestone 2 (transcribe long videos).
+**Status (2026-10-20):** Milestone 1 (Scaffold) is done and tested. Next: milestone 2 (transcribe long videos), plan awaiting approval.
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
