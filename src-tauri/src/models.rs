@@ -538,6 +538,7 @@ pub(crate) mod tests {
         let cancel = AtomicBool::new(false);
         let path = download(WhisperModel::Base, &dirs, &cancel, |_| {}).unwrap();
         assert!(WhisperModel::Base.is_downloaded(path.parent().unwrap()));
+        let _ = fs::remove_file(path); // 148 MB; disk is tight on the dev Mac
     }
 
     /// Uses Captions' real base model, if this computer has it:

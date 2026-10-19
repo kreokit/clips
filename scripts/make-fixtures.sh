@@ -6,6 +6,7 @@
 #   <name>.mp4  640x360 dark background + speech, starting after 1 s of silence
 #
 #   hello   plain English, for probe, accuracy and timing tests (same clip as KreoKit Captions)
+#   brands  made-up names, for the custom-words test (same clip as KreoKit Captions)
 #
 # Longer synthetic videos (10+ minutes, for transcription chunking) come with milestone 2.
 set -euo pipefail
@@ -46,3 +47,5 @@ make_clip() {
 make_clip hello "Welcome to the caption test. The quick brown fox jumps over the lazy dog. \
 Every video deserves clear and accurate captions."
 
+make_clip brands "Welcome back to KreoKit. Today Zylvana and Morvelle show how Quillhaven \
+makes captions."

@@ -170,9 +170,17 @@ impl Loudness {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// All of a video's audio at once (tests only; the app streams it).
+    pub(crate) fn read_all(video: &Path) -> Vec<f32> {
+        let mut stream = AudioStream::open(video).unwrap();
+        let mut samples = Vec::new();
+        while stream.read(&mut samples, 1 << 20).unwrap() > 0 {}
+        samples
+    }
 
     #[test]
     fn decodes_f32le_samples() {

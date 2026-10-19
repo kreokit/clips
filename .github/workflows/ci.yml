@@ -15,6 +15,9 @@ jobs:
   linux:
     name: Linux tests and licence checks
     runs-on: ubuntu-22.04
+    env:
+      # The Whisper tests find the base model in <KREOKIT_APP_DATA>/models.
+      KREOKIT_APP_DATA: ${{ runner.temp }}/com.kreokit.clips
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -36,10 +39,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev ffmpeg
+      - name: Cache the Whisper base model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/com.kreokit.clips/models
+          key: whisper-ggml-base-60ed5bc3
+      - name: Whisper base model from our mirror
+        run: |
+          dir="$KREOKIT_APP_DATA/models"
+          mkdir -p "$dir"
+          if [ ! -f "$dir/ggml-base.bin" ]; then
+            curl -fL --retry 3 -o "$dir/ggml-base.bin" \
+              https://github.com/kreokit/clips/releases/download/models-v1/ggml-base.bin
+          fi
+          echo "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe  $dir/ggml-base.bin" \
+            | sha256sum -c -
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm build
-      - name: Rust tests (with the FFmpeg ones)
+      - name: Rust tests (with the FFmpeg and Whisper ones)
         working-directory: src-tauri
         run: cargo test --locked -- --include-ignored
       - name: Rust dependency licences (cargo-deny)
@@ -61,6 +79,9 @@ jobs:
           - name: Windows
             os: windows-latest
     runs-on: ${{ matrix.os }}
+    env:
+      # macOS: the classic Accelerate cblas_sgemm, as the release builds (CLAUDE.md lessons).
+      CXXFLAGS: ${{ startsWith(matrix.os, 'macos') && '-UACCELERATE_NEW_LAPACK -UACCELERATE_LAPACK_ILP64' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -74,6 +95,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # whisper-rs-sys doesn't rebuild when CXXFLAGS change; change the key then.
+          key: accelerate-classic
       # tauri::generate_context! embeds the built frontend.
       - run: pnpm install --frozen-lockfile
       - run: pnpm test

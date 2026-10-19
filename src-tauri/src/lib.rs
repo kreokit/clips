@@ -6,7 +6,9 @@ mod ffmpeg;
 mod models;
 mod probe;
 mod projects;
+mod transcribe;
 mod vad;
+mod wer;
 
 use std::path::PathBuf;
 use std::sync::Arc;

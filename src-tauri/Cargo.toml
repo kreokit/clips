@@ -24,6 +24,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 sha2 = "0.11.0"
 ureq = "3"
+whisper-rs = "0.16.0"
 
 [profile.dev]
 opt-level = 1

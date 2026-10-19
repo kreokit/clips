@@ -18,6 +18,11 @@ A matching Whisper model that KreoKit Captions has already downloaded is used fr
 Captions' folder instead (read-only, after the same checksum check). BlazeFace full-range
 (face detection, Apache-2.0) is added with milestone 4.
 
+## whisper.cpp and ggml (compiled into the app)
+
+Speech recognition uses whisper.cpp and ggml (via the whisper-rs crates), © the
+ggml / whisper.cpp authors, **MIT** licence: <https://github.com/ggml-org/whisper.cpp>.
+
 ## FFmpeg (separate program)
 
 Development builds use the FFmpeg installed on the computer. Release builds (milestone 6)
