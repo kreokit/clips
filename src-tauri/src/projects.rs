@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::ffmpeg;
 use crate::probe::VideoInfo;
+use crate::transcription::Settings;
 
 /// Current `project.json` format version. Bump it when the format changes incompatibly,
 /// and teach [`load`] to read the older versions. New optional fields don't need a bump
@@ -36,6 +37,9 @@ pub struct Project {
     pub video_size: u64,
     pub video_mtime_ms: u64,
     pub video: VideoInfo,
+    /// The Transcribe screen's choices (missing in projects made before milestone 2).
+    #[serde(default)]
+    pub transcription: Settings,
     /// Unix milliseconds.
     pub created_at: u64,
     pub opened_at: u64,
@@ -85,7 +89,7 @@ pub fn project_id(video_path: &str, size: u64, mtime_ms: u64) -> String {
 }
 
 /// Ids come from the webview, so only accept the exact format we make: never a path.
-fn project_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
+pub fn project_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
     if id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit()) {
         Ok(root.join(id))
     } else {
@@ -218,6 +222,7 @@ pub fn open_video(
         video_size: size,
         video_mtime_ms: mtime,
         video: info,
+        transcription: Settings::default(),
         created_at: now,
         opened_at: now,
         updated_at: now,

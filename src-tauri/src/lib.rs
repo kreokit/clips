@@ -1,6 +1,7 @@
 //! KreoKit Clips: long video → vertical short clips with captions, offline.
 
 mod audio;
+mod awake;
 mod chunks;
 mod cpu;
 mod ffmpeg;
@@ -10,6 +11,8 @@ mod projects;
 mod transcribe;
 mod transcription;
 mod vad;
+// Accuracy checks; tests only until the release self-test (milestone 6) uses it.
+#[cfg(test)]
 mod wer;
 
 use std::path::PathBuf;
@@ -20,10 +23,16 @@ use models::{ModelDirs, ModelInfo, WhisperModel};
 use probe::VideoInfo;
 use projects::{Project, ProjectEntry};
 use tauri::{AppHandle, Emitter, Manager, State};
+use transcribe::Transcript;
+use transcription::Settings;
 
-/// Set by `cancel`; checked by the running model download (and, later, transcription).
+/// Set by `cancel`; checked by the running model check/download and transcription.
 #[derive(Default)]
 struct CancelFlag(Arc<AtomicBool>);
+
+/// Set while a transcription runs; there is only ever one.
+#[derive(Default)]
+struct Busy(Arc<AtomicBool>);
 
 /// Runs blocking work (ffprobe, later whisper and FFmpeg) off the async runtime.
 async fn blocking<T: Send + 'static>(
@@ -159,10 +168,101 @@ async fn prepare_model(
     .await
 }
 
-/// Stops the running model check or download.
+/// Stops the running model check, download or transcription.
 #[tauri::command]
 fn cancel(cancel: State<'_, CancelFlag>) {
     cancel.0.store(true, Ordering::Relaxed);
+}
+
+/// A project's transcript cache folder and the facts the cache is checked against.
+fn transcript_job(
+    app: &AppHandle,
+    id: &str,
+) -> Result<(Project, PathBuf, transcription::Video), String> {
+    let root = projects_root(app)?;
+    let project = projects::load(&root, id)?;
+    let dir = projects::project_dir(&root, id)?.join("transcript");
+    let video = transcription::Video {
+        size: project.video_size,
+        mtime_ms: project.video_mtime_ms,
+        duration_ms: project.video.duration_ms,
+    };
+    Ok((project, dir, video))
+}
+
+/// What the Transcribe screen shows for these settings: a finished transcript, or how
+/// many parts a cancelled run has finished.
+#[derive(serde::Serialize)]
+struct TranscriptStatus {
+    transcript: Option<Transcript>,
+    finished_parts: usize,
+    /// About how many parts the video has.
+    parts: usize,
+}
+
+#[tauri::command]
+async fn transcript_status(
+    app: AppHandle,
+    id: String,
+    settings: Settings,
+) -> Result<TranscriptStatus, String> {
+    blocking(move || {
+        let (_, dir, video) = transcript_job(&app, &id)?;
+        let limits = &chunks::LIMITS;
+        Ok(TranscriptStatus {
+            transcript: transcription::cached(&dir, &settings, &video, limits)
+                .map(|o| o.transcript),
+            finished_parts: transcription::finished_parts(&dir, &settings, &video, limits),
+            parts: video.duration_ms.div_ceil(limits.target_ms).max(1) as usize,
+        })
+    })
+    .await
+}
+
+/// Transcribes the project's video (resuming a cancelled run), emitting
+/// `transcription-progress`. The model must be ready (`prepare_model`).
+#[tauri::command]
+async fn transcribe(
+    app: AppHandle,
+    cancel: State<'_, CancelFlag>,
+    busy: State<'_, Busy>,
+    id: String,
+    settings: Settings,
+) -> Result<Transcript, String> {
+    if busy.0.swap(true, Ordering::SeqCst) {
+        return Err("A transcription is already running.".into());
+    }
+    let busy = busy.0.clone();
+    let cancel = cancel.0.clone();
+    cancel.store(false, Ordering::Relaxed);
+    let result = blocking(move || {
+        let (project, dir, video) = transcript_job(&app, &id)?;
+        let dirs = model_dirs(&app)?;
+        let _awake = awake::KeepAwake::new("transcribing");
+        let mut audio = audio::AudioStream::open(&PathBuf::from(&project.video_path))?;
+        let load = || {
+            let path = models::resolve(settings.model, &dirs, &cancel, |_| {})?
+                .ok_or("The model isn't downloaded yet.")?;
+            transcribe::Engine::load(settings.model, &path)
+        };
+        let emitter = app.clone();
+        transcription::run(
+            &dir,
+            &settings,
+            &video,
+            &chunks::LIMITS,
+            &mut audio,
+            load,
+            &cancel,
+            move |p| {
+                let _ = emitter.emit("transcription-progress", p);
+            },
+        )
+        .map(|o| o.transcript)
+    })
+    .await;
+    busy.store(false, Ordering::SeqCst);
+    result
 }
 
 #[tauri::command]
@@ -211,6 +311,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(CancelFlag::default())
+        .manage(Busy::default())
         .invoke_handler(tauri::generate_handler![
             probe_video,
             list_projects,
@@ -223,6 +324,8 @@ pub fn run() {
             list_models,
             prepare_model,
             cancel,
+            transcript_status,
+            transcribe,
             cpu_support,
             quit_app,
             report_problem,

@@ -48,6 +48,22 @@ pub struct Settings {
     pub hide_non_speech: bool,
 }
 
+impl Default for Settings {
+    /// Base keeps development fast; releases default to Small (as in Captions).
+    fn default() -> Self {
+        Self {
+            model: if cfg!(debug_assertions) {
+                WhisperModel::Base
+            } else {
+                WhisperModel::Small
+            },
+            language: None,
+            custom_words: String::new(),
+            hide_non_speech: true,
+        }
+    }
+}
+
 /// The video being transcribed: its fingerprint (as in the project) and probed length.
 #[derive(Debug, Clone, Copy)]
 pub struct Video {

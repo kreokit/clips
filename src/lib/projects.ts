@@ -11,6 +11,18 @@ export interface VideoInfo {
   has_audio: boolean;
 }
 
+/** src-tauri/src/models.rs `WhisperModel`. */
+export type WhisperModel = "base" | "small" | "large-v3-turbo";
+
+/** src-tauri/src/transcription.rs `Settings`: the Transcribe screen's choices. */
+export interface TranscriptionSettings {
+  model: WhisperModel;
+  /** A Whisper language code, or null to detect it. */
+  language: string | null;
+  custom_words: string;
+  hide_non_speech: boolean;
+}
+
 /** src-tauri/src/projects.rs `Project`: one auto-saved project per imported video. */
 export interface Project {
   version: number;
@@ -20,6 +32,7 @@ export interface Project {
   video_size: number;
   video_mtime_ms: number;
   video: VideoInfo;
+  transcription: TranscriptionSettings;
   created_at: number;
   opened_at: number;
   updated_at: number;
