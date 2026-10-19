@@ -1,10 +1,12 @@
 //! KreoKit Clips: long video → vertical short clips with captions, offline.
 
+mod audio;
 mod cpu;
 mod ffmpeg;
 mod models;
 mod probe;
 mod projects;
+mod vad;
 
 use std::path::PathBuf;
 use std::sync::Arc;
