@@ -3,11 +3,13 @@
 mod cpu;
 mod ffmpeg;
 mod probe;
+mod projects;
 
 use std::path::PathBuf;
 
 use probe::VideoInfo;
-use tauri::AppHandle;
+use projects::{Project, ProjectEntry};
+use tauri::{AppHandle, Manager};
 
 /// Runs blocking work (ffprobe, later whisper and FFmpeg) off the async runtime.
 async fn blocking<T: Send + 'static>(
@@ -21,6 +23,71 @@ async fn blocking<T: Send + 'static>(
 #[tauri::command]
 async fn probe_video(path: String) -> Result<VideoInfo, String> {
     blocking(move || probe::probe_video(&PathBuf::from(path))).await
+}
+
+/// `<app data>/projects`, where every project lives (CLAUDE.md "Projects").
+fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("projects"))
+        .map_err(|e| format!("no app data folder: {e}"))
+}
+
+#[tauri::command]
+async fn list_projects(app: AppHandle) -> Result<Vec<ProjectEntry>, String> {
+    let root = projects_root(&app)?;
+    blocking(move || Ok(projects::list(&root))).await
+}
+
+/// Opens the project of the video at `path`, creating it on first import.
+#[tauri::command]
+async fn open_video(app: AppHandle, path: String) -> Result<Project, String> {
+    let root = projects_root(&app)?;
+    blocking(move || {
+        projects::open_video(
+            &root,
+            &PathBuf::from(path),
+            probe::probe_video,
+            projects::now_ms(),
+        )
+    })
+    .await
+}
+
+/// The autosave: writes the project and returns it with `updated_at` set.
+#[tauri::command]
+async fn save_project(app: AppHandle, project: Project) -> Result<Project, String> {
+    let root = projects_root(&app)?;
+    blocking(move || projects::save(&root, &project, projects::now_ms())).await
+}
+
+#[tauri::command]
+async fn locate_video(app: AppHandle, id: String, path: String) -> Result<Project, String> {
+    let root = projects_root(&app)?;
+    blocking(move || {
+        projects::locate_video(
+            &root,
+            &id,
+            &PathBuf::from(path),
+            probe::probe_video,
+            projects::now_ms(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_project(app: AppHandle, id: String) -> Result<(), String> {
+    let root = projects_root(&app)?;
+    blocking(move || projects::remove(&root, &id)).await
+}
+
+/// Path of the project's thumbnail (made on first request), for `convertFileSrc`.
+#[tauri::command]
+async fn project_thumbnail(app: AppHandle, id: String) -> Result<String, String> {
+    let root = projects_root(&app)?;
+    blocking(move || projects::thumbnail(&root, &id).map(|p| p.to_string_lossy().into_owned()))
+        .await
 }
 
 #[tauri::command]
@@ -57,6 +124,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             probe_video,
+            list_projects,
+            open_video,
+            save_project,
+            locate_video,
+            remove_project,
+            project_thumbnail,
             cpu_support,
             quit_app,
             report_problem
