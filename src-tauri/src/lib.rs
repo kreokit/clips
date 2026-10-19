@@ -2,14 +2,22 @@
 
 mod cpu;
 mod ffmpeg;
+mod models;
 mod probe;
 mod projects;
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use models::{ModelDirs, ModelInfo, WhisperModel};
 use probe::VideoInfo;
 use projects::{Project, ProjectEntry};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Set by `cancel`; checked by the running model download (and, later, transcription).
+#[derive(Default)]
+struct CancelFlag(Arc<AtomicBool>);
 
 /// Runs blocking work (ffprobe, later whisper and FFmpeg) off the async runtime.
 async fn blocking<T: Send + 'static>(
@@ -97,6 +105,60 @@ async fn project_thumbnail(app: AppHandle, id: String) -> Result<String, String>
         .await
 }
 
+fn model_dirs(app: &AppHandle) -> Result<ModelDirs, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| ModelDirs::new(&dir))
+        .map_err(|e| format!("no app data folder: {e}"))
+}
+
+#[tauri::command]
+async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
+    let dirs = model_dirs(&app)?;
+    blocking(move || Ok(models::list(&dirs))).await
+}
+
+/// What `prepare_model` is doing, for its progress events.
+#[derive(Clone, serde::Serialize)]
+struct ModelProgress {
+    /// "checking" (a model from Captions' folder) or "downloading".
+    stage: &'static str,
+    #[serde(flatten)]
+    progress: models::Progress,
+}
+
+/// Makes `model` ready to use: a matching file from Captions' folder after its checksum,
+/// else a download from our mirror. Emits `model-progress`.
+#[tauri::command]
+async fn prepare_model(
+    app: AppHandle,
+    cancel: State<'_, CancelFlag>,
+    model: WhisperModel,
+) -> Result<(), String> {
+    let dirs = model_dirs(&app)?;
+    let cancel = cancel.0.clone();
+    cancel.store(false, Ordering::Relaxed);
+    blocking(move || {
+        let emit = |stage| {
+            let app = app.clone();
+            move |progress| {
+                let _ = app.emit("model-progress", ModelProgress { stage, progress });
+            }
+        };
+        if models::resolve(model, &dirs, &cancel, emit("checking"))?.is_none() {
+            models::download(model, &dirs, &cancel, emit("downloading"))?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Stops the running model check or download.
+#[tauri::command]
+fn cancel(cancel: State<'_, CancelFlag>) {
+    cancel.0.store(true, Ordering::Relaxed);
+}
+
 #[tauri::command]
 fn cpu_support() -> cpu::CpuSupport {
     cpu::check()
@@ -142,6 +204,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(CancelFlag::default())
         .invoke_handler(tauri::generate_handler![
             probe_video,
             list_projects,
@@ -151,6 +214,9 @@ pub fn run() {
             locate_video,
             remove_project,
             project_thumbnail,
+            list_models,
+            prepare_model,
+            cancel,
             cpu_support,
             quit_app,
             report_problem,

@@ -5,11 +5,18 @@ uses the third-party components below, each under its own licence.
 
 ## AI models (downloaded on first use, not bundled)
 
-Only models whose **weights** are MIT, Apache-2.0 or BSD licensed are used. The app will
-download them from this project's own GitHub release `models-v1`, where each file sits
-next to its licence, a source note and checksums. None is used yet: Whisper (speech
-recognition) arrives with milestone 2, BlazeFace full-range (face detection, Apache-2.0)
-with milestone 4. Each one is listed here, with its original source, when it is added.
+Only models whose **weights** are MIT, Apache-2.0 or BSD licensed are used. The app
+downloads them only from this project's own GitHub releases (`models-vN`), where each file
+sits next to its licence, a source note and checksums, and checks every file against a
+pinned SHA-256.
+
+| Model | Used for | Licence | Mirror | Original source |
+|---|---|---|---|---|
+| Whisper Base, Small, Large-v3-turbo (ggml) | speech recognition | **MIT** (weights © 2022 OpenAI; ggml conversion © the ggml authors) | `models-v1` | <https://github.com/openai/whisper>, converted by <https://github.com/ggml-org/whisper.cpp>, files from <https://huggingface.co/ggerganov/whisper.cpp> |
+
+A matching Whisper model that KreoKit Captions has already downloaded is used from
+Captions' folder instead (read-only, after the same checksum check). BlazeFace full-range
+(face detection, Apache-2.0) is added with milestone 4.
 
 ## FFmpeg (separate program)
 
