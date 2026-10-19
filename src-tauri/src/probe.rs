@@ -28,12 +28,16 @@ pub fn probe_video(path: &Path) -> Result<VideoInfo, String> {
     }
     let ffprobe = ffmpeg::locate("ffprobe")?;
     let output = Command::new(&ffprobe)
-        .args(["-v", "error"])
+        // Whole sections rather than -show_entries: section names differ between FFmpeg
+        // versions (4.4 has no `stream_side_data`), and unknown fields are ignored.
         .args([
-            "-show_entries",
-            "format=duration:stream=codec_type,width,height,avg_frame_rate,r_frame_rate,duration,disposition:stream_side_data=rotation",
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
         ])
-        .args(["-of", "json"])
         .arg(path)
         .output()
         .map_err(|e| format!("failed to run {}: {e}", ffprobe.display()))?;
@@ -66,6 +70,14 @@ struct FfprobeStream {
     disposition: Option<Disposition>,
     #[serde(default)]
     side_data_list: Vec<SideData>,
+    #[serde(default)]
+    tags: Tags,
+}
+
+#[derive(Deserialize, Default)]
+struct Tags {
+    /// Clockwise rotation in degrees, as FFmpeg 4.x and older also report it.
+    rotate: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -130,6 +142,10 @@ pub fn parse_ffprobe_json(json: &str) -> Result<VideoInfo, String> {
         .iter()
         .find_map(|d| d.rotation)
         .map(normalize_rotation)
+        .or_else(|| {
+            let clockwise = stream.tags.rotate.as_deref()?.trim().parse::<f64>().ok()?;
+            Some(normalize_rotation(-clockwise))
+        })
         .unwrap_or(0);
     let (width, height) = if rotation % 180 == 90 {
         (coded_height, coded_width)
@@ -229,6 +245,17 @@ mod tests {
                           "avg_frame_rate": "30/1",
                           "side_data_list": [{ "rotation": -90 }] },
                         { "codec_type": "audio" }],
+            "format": { "duration": "5.0" }
+        }"#;
+        let info = parse_ffprobe_json(json).unwrap();
+        assert_eq!((info.width, info.height, info.rotation), (1080, 1920, 90));
+    }
+
+    #[test]
+    fn reads_the_rotate_tag_of_older_ffprobe() {
+        let json = r#"{
+            "streams": [{ "codec_type": "video", "width": 1920, "height": 1080,
+                          "avg_frame_rate": "30/1", "tags": { "rotate": "90" } }],
             "format": { "duration": "5.0" }
         }"#;
         let info = parse_ffprobe_json(json).unwrap();
