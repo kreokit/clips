@@ -1,8 +1,27 @@
 //! KreoKit Clips: long video → vertical short clips with captions, offline.
 
 mod cpu;
+mod ffmpeg;
+mod probe;
 
+use std::path::PathBuf;
+
+use probe::VideoInfo;
 use tauri::AppHandle;
+
+/// Runs blocking work (ffprobe, later whisper and FFmpeg) off the async runtime.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn probe_video(path: String) -> Result<VideoInfo, String> {
+    blocking(move || probe::probe_video(&PathBuf::from(path))).await
+}
 
 #[tauri::command]
 fn cpu_support() -> cpu::CpuSupport {
@@ -37,6 +56,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            probe_video,
             cpu_support,
             quit_app,
             report_problem

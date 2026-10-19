@@ -53,7 +53,9 @@ fn missing_features() -> Vec<&'static str> {
     Vec::new()
 }
 
-/// The message shown when transcription or face detection can't run on this CPU.
+/// The message shown when transcription or face detection can't run on this CPU (for the
+/// command-line `--self-test`, milestone 6).
+#[allow(dead_code)]
 pub fn unsupported_message(missing: &[&str]) -> String {
     format!(
         "This CPU isn't supported: transcription and speaker tracking need a processor with {} \
