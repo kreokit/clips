@@ -10,11 +10,20 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # whisper.cpp: a fixed CPU baseline, as in the release builds. Its default (-march=native)
+  # breaks with rust-cache: a build cached on a runner with newer CPU features crashed with
+  # SIGILL on an older runner. x86-64 gets AVX2/FMA/F16C, which the app checks at startup.
+  GGML_NATIVE: "OFF"
 
 jobs:
   linux:
     name: Linux tests and licence checks
     runs-on: ubuntu-22.04
+    env:
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
     steps:
       - uses: actions/checkout@v4
       # The Whisper tests find the base model in <KREOKIT_APP_DATA>/models.
@@ -33,6 +42,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # whisper-rs-sys doesn't rebuild when GGML_* change; change the key then.
+          key: ggml-baseline
       - name: Linux packages for Tauri, and FFmpeg for the probe tests
         run: |
           sudo apt-get update
@@ -81,6 +92,11 @@ jobs:
     env:
       # macOS: the classic Accelerate cblas_sgemm, as the release builds (CLAUDE.md lessons).
       CXXFLAGS: ${{ startsWith(matrix.os, 'macos') && '-UACCELERATE_NEW_LAPACK -UACCELERATE_LAPACK_ILP64' || '' }}
+      # Windows runners are x86-64: the same baseline as Linux. (macos-15 is Apple Silicon.)
+      GGML_AVX: ${{ startsWith(matrix.os, 'windows') && 'ON' || 'OFF' }}
+      GGML_AVX2: ${{ startsWith(matrix.os, 'windows') && 'ON' || 'OFF' }}
+      GGML_FMA: ${{ startsWith(matrix.os, 'windows') && 'ON' || 'OFF' }}
+      GGML_F16C: ${{ startsWith(matrix.os, 'windows') && 'ON' || 'OFF' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -95,7 +111,7 @@ jobs:
         with:
           workspaces: src-tauri
           # whisper-rs-sys doesn't rebuild when CXXFLAGS change; change the key then.
-          key: accelerate-classic
+          key: accelerate-classic-ggml-baseline
       # tauri::generate_context! embeds the built frontend.
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
