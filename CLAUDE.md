@@ -1,6 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
+**Status (2026-10-20):** Milestone 1 (Scaffold) is done. Next: milestone 2 (transcribe long videos).
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -75,6 +76,16 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 - The project id is a hash of the video path + size + mtime, so importing the same video again opens its project. Recent projects on Home come from this folder; a missing video shows "Locate video…".
 - Projects can be removed from Home (deletes the project folder, never the video).
 
+## Scaffold (milestone 1)
+
+- **Copied from Cutout:** tokens, base styles, UI kit (`src/ui/`, with `logic.test.ts`), top bar, macOS overlay title bar, Home layout, issue templates, `deny.toml`, `third_party.py`, `check_macos_binary.py`. **From Captions:** `ffmpeg.rs` (dev uses the system FFmpeg; `KREOKIT_FFMPEG` / `KREOKIT_FFPROBE` override), `probe.rs`, `fixtures/en/hello.mp4`, `scripts/make-fixtures.sh`
+- **CPU check** (`cpu.rs`): the union of both engines' baselines: whisper.cpp release builds (AVX2, FMA, F16C) and ONNX Runtime 1.22 (SSSE3, SSE4.1, SSE4.2, POPCNT). The dialog offers Quit or Continue anyway
+- **Probe** (`probe.rs`): duration, **display** size (90°/270° rotation swaps width and height; `rotation` is clockwise), fps, `has_audio`; cover art is not a video stream. Importing a video without sound is refused (nothing to transcribe)
+- **Projects** (`projects.rs`, `src/store/project.ts`): `open_video` (create or reopen by id; a located video is found by path + fingerprint), `open_project`, `save_project` (autosave), `locate_video` (refuses a video whose size differs or length differs by more than 1 s), `remove_project`, `project_thumbnail` (`<project>/thumbnail.jpg`, served through the asset protocol, scope `$APPDATA/projects/*/thumbnail.jpg`). Ids from the webview are checked to be 16 hex digits. The frontend autosave (`src/lib/autosave.ts`) waits 600 ms, never overlaps saves, and is flushed before switching projects and when the window closes
+- **Project screen** (`ProjectView.tsx`): a placeholder with the probed facts and the editable project name, until milestones 2–3 replace it
+- **Dev aid:** `KREOKIT_DEV_OPEN=/path/video.mp4 pnpm tauri dev` opens that video at startup (debug builds only)
+- **CI** (`ci.yml`): Linux runs everything incl. the FFmpeg tests (`--include-ignored`), cargo-deny and the THIRD-PARTY check; macOS and Windows run the frontend build and tests and the Rust tests
+
 ## Screens (v0.1)
 
 1. **Home:** drop zone, recent projects.
@@ -85,7 +96,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 ## Milestones
 
-1. **Scaffold:** repo from Captions/Cutout foundations, dev port 1440, Home, probe a video.
+1. ✅ **Scaffold:** repo from Captions/Cutout foundations, dev port 1440, Home, probe a video.
 2. **Transcribe long videos:** port Captions' pipeline incl. macOS build flags; chunking, progress, cancel, cache; tested on a 10+ minute synthetic video.
 3. **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips.
 4. **Reframe:** BlazeFace full-range converted to ONNX in Actions (license verified, mirrored), detection + tracking + smoothing, crop modes, preview.
@@ -101,4 +112,4 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 ## Dev environment
 
-- macOS 12 Monterey, Intel Core i5 (CPU only), ~13 GB free disk. Use Base for dev transcription; long videos are slow on this CPU, so always show progress and allow cancel.
+- macOS 12 Monterey, Intel Core i5 (CPU only), ~24 GB free disk (2026-10-20, after `cargo clean` in Captions and Cutout; a Tauri build folder takes several GB). Use Base for dev transcription; long videos are slow on this CPU, so always show progress and allow cancel.
