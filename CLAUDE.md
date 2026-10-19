@@ -62,11 +62,18 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 ## Reframe
 
-- Face detection: a small permissively licensed ONNX model (candidates: YuNet from OpenCV Zoo, BlazeFace from MediaPipe; **verify weights licence first**).
+- **Face model (decided 2026-10-19): MediaPipe BlazeFace full-range** (Apache-2.0, clean training data). It ships as TFLite; in M4 convert it to ONNX in a GitHub Actions workflow (reproducible, pinned tool versions, checked against the TFLite output, like Cutout's "Export BiRefNet"), then mirror it in `models-v1` with licence, SOURCE.md and SHA256SUMS. Still verify the licence from the official source and record it in `THIRD-PARTY-LICENSES.md` when adding it.
+- **Excluded face models:** YuNet, SCRFD and YOLO-face (training-data / licence risk). Don't revisit without asking.
 - Sample ~2–5 fps, track faces, pick the active speaker (largest/most central face, or the face whose mouth region moves while that segment is spoken when feasible).
 - Smooth the crop path (no jitter; limit speed; hold position during short gaps), keep the face in the upper-middle third.
 - Fallbacks: center crop, or "fit with blurred background" (letterbox inside 9:16).
 - Manual override: drag the crop window on a keyframe.
+
+## Projects (decided 2026-10-19)
+
+- **Auto-saved, no Save dialog.** Each imported video gets a project in the app data folder (`<app data>/projects/<id>/project.json`, plus its caches: transcript, candidates, face tracks). Every change is saved automatically (debounced, atomic temp file + rename, as Captions' `project.rs`); there is no Save / Save As.
+- The project id is a hash of the video path + size + mtime, so importing the same video again opens its project. Recent projects on Home come from this folder; a missing video shows "Locate video…".
+- Projects can be removed from Home (deletes the project folder, never the video).
 
 ## Screens (v0.1)
 
@@ -81,7 +88,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 1. **Scaffold:** repo from Captions/Cutout foundations, dev port 1440, Home, probe a video.
 2. **Transcribe long videos:** port Captions' pipeline incl. macOS build flags; chunking, progress, cancel, cache; tested on a 10+ minute synthetic video.
 3. **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips.
-4. **Reframe:** face model (license verified, mirrored), detection + tracking + smoothing, crop modes, preview.
+4. **Reframe:** BlazeFace full-range converted to ONNX in Actions (license verified, mirrored), detection + tracking + smoothing, crop modes, preview.
 5. **Captions + export all:** reuse styles/layout/ASS/burn-in on the 9:16 output, batch export with safe writing.
 6. **Release:** reuse the release workflow, `--self-test` (transcribe a short fixture, find ≥1 moment, reframe, export one clip and verify size/duration), draft pre-release v0.1.0-alpha.
 
