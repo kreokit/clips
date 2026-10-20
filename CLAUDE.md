@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-20):** Milestones 1 (Scaffold) and 2 (Transcribe long videos) are done and tested. Next: milestone 3 (moment finder + clips board), not started.
+**Status (2026-10-20):** Milestones 1 (Scaffold) and 2 (Transcribe long videos) are done and tested. Milestone 3 (moment finder + clips board) is built and waiting for the user's test.
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -102,6 +102,18 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 - **CI builds whisper.cpp with a fixed CPU baseline** (`GGML_NATIVE=OFF`, AVX2/FMA/F16C on x86-64), like the releases: with the default `-march=native`, a build cached by rust-cache on a newer runner CPU crashed the tests with SIGILL on an older one. The macOS job uses the classic Accelerate flags. Change the rust-cache key whenever `GGML_*`/`CXXFLAGS` change
 - **Git push of large fixtures:** `git -c http.postBuffer=157286400 push` (the default buffer fails with HTTP 400)
 
+## Moments and clips (milestone 3)
+
+- **Decided 2026-10-20 (user):** sound tags kept as `sounds` for the energy score; the prompt fix (below) in M3; defaults 20–60 s, target 35 s, about one clip per 2 minutes (5–30); the M3 editor shows the 16:9 source (9:16 in M4). Additions: leading fillers ("um", "uh", "you know", "like", "so um") lower the hook and the in point moves past them when the clip stays long enough; a clean ending (punctuation / strong pause) scores, ending mid-thought costs.
+- **Transcript changes** (`transcribe.rs`, `transcription.rs`): removed sound tags are recorded per segment as `sounds` (whether hidden or shown; a segment of only hidden tags keeps them with empty text). The next part's prompt leaves out the previous part's end when it looks unpunctuated (≥ 12 words and no sentence end or no capital but "I"), so Whisper's lowercase mode doesn't spread; after it, the long fixture's uninterrupted run kept its punctuation (83 of 84 sentence ends).
+- **Sentences** (`sentences.rs`, pure): punctuation first (titles never end a sentence; "?", "!", "…" and abbreviations only before a capital: Whisper bleeps swear words as "f!"). Stretches over 20 s / 50 words without a sentence end are cut at pauses scored 1–3 points by length (400 / 700 / 2000 ms, scaled for slow speakers), +1 before a sentence starter, −1 before "and/because…", +2 at a Whisper segment edge, never after "the/to/is…" or before "of/is…" or between numbers; 3 points is a `Pause`. Sentences over 30 s split at their best pause (`WeakPause`). Measured on a real 10-minute talk stripped of punctuation: 0.88 precision, 0.14 recall (2-point pauses were right only half the time, so they don't count). The pause distributions used in the synthetic tests come from that talk (not in the repo); `KREOKIT_TRANSCRIPT=<…/transcript.json> cargo test real_transcript -- --ignored --nocapture` repeats the check, and prints the moments, on any transcript.
+- **Moment finder** (`moments.rs`, pure): every run of whole sentences between min and max; score 0–100 = Hook 25 + Start 15 + Ending 15 + Energy 25 + Length 20, each feature 0–1 with its reasons (English phrase lists; for other languages the hook isn't judged and the rest scale up). Energy compares speech rate and the loudness of speech seconds (`loudness.json`) with the video's average, adds laughter/applause in or up to 2 s after the clip, subtracts silences over 2 s. Picking: best first, at most 20% overlap of the shorter clip, avoiding clips already on the board. `Context` precomputes each word's sentence and the speech seconds: two hours take ~0.4 s in a test build. Clip text is filled only for the picked clips.
+- **Data:** `project.finder` and `project.clips` (`Clip`: id, in/out, status proposed/kept/discarded, source found/manual, `edited`, latest `moment`). No separate candidates cache: finding is fast. Commands `find_moments(id, settings, finder, avoid, have)`, `score_clips(id, settings, finder, ranges)`, `transcript_text(id, settings)` (spoken words + sentences + sounds), `clip_thumbnail(id, ms)` (`<project>/thumbs/<ms>.jpg`, rounded to 0.1 s, in the asset scope), `waveform_range(id, from, to)` (`waveform.rs` from Captions, reads only that stretch, ≤ 15 min). The video is allowed through the asset protocol when its project opens (`allow_video`).
+- **Board** (`ClipsBoard.tsx`, logic in `src/lib/clips.ts`): after a transcript, the project has Clips and Transcript tabs (the Transcribe panel stays mounted so a run survives a tab switch). The finder runs by itself the first time; Find again replaces only untouched proposals (found, proposed, not edited) and rescores the rest; a new transcript rescores every clip. Cards: thumbnail (two FFmpeg runs at a time, `queue.ts`), score, length, range, first line, top reasons; keep / discard / restore, "Why this clip" popover, filter and sort; keys arrows, K, X, U, I, Enter. Add clip; manual clips are deleted rather than discarded.
+- **Editor** (`ClipEditor.tsx`, logic in `src/lib/clipEdit.ts`): source video playing in→out, the clip's words with a sentence of context (spoken word highlighted, click seeks, drag-select → Make clip), timeline ported from Captions (`timeline.ts`) with the waveform for the visible window, sentence marks (solid punctuation, dashed pause), in/out handles snapping to sentence edges (2× reach) then word edges, with the finder's padding (150 ms lead, 300 ms tail, at most half the gap). Keys Space, I / O, N, [ / ], K, X, Escape. A trimmed found clip is marked edited.
+- **Tests:** Rust unit tests on synthetic transcripts (the long fixture's script with real-speech pause and segment-edge distributions), the long-fixture test runs the finder on both transcripts and checks whole script sentences; vitest for the board and editor logic.
+- **CI runs ignored tests on Linux:** a dev-only ignored test must skip (not panic) when its input is missing (CI was red on d1a55ac..d26ff51 for that).
+
 ## Screens (v0.1)
 
 1. **Home:** drop zone, recent projects.
@@ -116,7 +128,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 2. ✅ **Transcribe long videos:** port Captions' pipeline incl. macOS build flags; chunking, progress, cancel, cache; tested on a 10+ minute synthetic video.
    - Decided 2026-10-20: the three ggml Whisper models (Base, Small, Large-v3-turbo) are mirrored unchanged in `models-v1` on `kreokit/clips` (licence, SOURCE.md, SHA256SUMS); the app downloads only from there. A matching model already in Captions' models folder is used read-only after a SHA-256 check instead of downloading it again. The computer is kept awake only while a job runs (macOS, and Windows via `SetThreadExecutionState`); check the new dependency's licence.
    - `models-v1` is published (2026-10-20). GitHub shows it as "Latest" while it's the only release; mark the app release as latest when it's published (as in Cutout, never link `/releases/latest` for the app before that).
-3. **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips.
+3. **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips. Built 2026-10-20, waiting for the user's test (see "Moments and clips").
 4. **Reframe:** BlazeFace full-range converted to ONNX in Actions (license verified, mirrored), detection + tracking + smoothing, crop modes, preview.
 5. **Captions + export all:** reuse styles/layout/ASS/burn-in on the 9:16 output, batch export with safe writing.
 6. **Release:** reuse the release workflow, `--self-test` (transcribe a short fixture, find ≥1 moment, reframe, export one clip and verify size/duration), draft pre-release v0.1.0-alpha.
@@ -129,6 +141,8 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 - Export: every clip is exactly 1080×1920, duration matches in/out, captions burned at the expected position, N clips → N files, no overwrites.
 
 ## Backlog
+
+- **Punctuation recovery** for stretches Whisper left unpunctuated (the pause fallback finds about one sentence end in seven there); e.g. re-run such a part with a punctuated prompt.
 
 - **One shared KreoKit models folder** for all apps (for the future Hub), instead of each app's own folder plus Clips' read-only reuse of Captions' models.
 
