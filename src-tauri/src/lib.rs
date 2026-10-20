@@ -8,6 +8,9 @@ mod ffmpeg;
 mod models;
 mod probe;
 mod projects;
+// Used by the moment finder (next commit).
+#[allow(dead_code)]
+mod sentences;
 mod transcribe;
 mod transcription;
 mod vad;
