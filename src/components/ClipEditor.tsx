@@ -10,7 +10,9 @@ import {
   Maximize2,
   Pause,
   Play,
+  Plus,
   RotateCcw,
+  Trash2,
   X,
   ZoomIn,
   ZoomOut,
@@ -18,6 +20,8 @@ import {
 import {
   EdgeKind,
   Range,
+  clipAround,
+  clipFromWords,
   clipView,
   clipWords,
   contextWords,
@@ -29,7 +33,7 @@ import {
   snapTargets,
   wordIndexAt,
 } from "../lib/clipEdit";
-import { Clip, SpokenText, applyScores, scoreClips, transcriptText } from "../lib/clips";
+import { Clip, SpokenText, applyScores, manualClip, scoreClips, spokenText } from "../lib/clips";
 import { Project, formatDuration } from "../lib/projects";
 import { SNAP_PX, View, clampView, follow, msAt, tickLabel, tickStep, xAt, zoomAt } from "../lib/timeline";
 import { normalized } from "../lib/transcription";
@@ -45,26 +49,12 @@ const WAVEFORM_MARGIN_MS = 30_000;
 /** A press that moves less than this is a click, not a drag. */
 const CLICK_PX = 3;
 
-const texts = new Map<string, Promise<SpokenText>>();
-/** The transcript's words and sentences, read once per project and transcript settings. */
-function loadText(project: Project): Promise<SpokenText> {
-  const settings = normalized(project.transcription);
-  const key = `${project.id} ${JSON.stringify(settings)}`;
-  let text = texts.get(key);
-  if (!text) {
-    text = transcriptText(project.id, settings);
-    text.catch(() => texts.delete(key));
-    texts.set(key, text);
-  }
-  return text;
-}
-
 /**
  * Edits one clip: the source video (16:9 here; the 9:16 preview comes with reframing),
  * the clip's words with a sentence of context, and a timeline with in/out handles that
- * snap to sentence and word edges. Keys: Space plays the clip, I / O set the in / out
- * point at the playhead, [ / ] go to the previous / next clip, K keeps, X discards,
- * Escape goes back to the board.
+ * snap to sentence and word edges. New clips: at the playhead (N) or from selected words.
+ * Keys: Space plays the clip, I / O set the in / out point at the playhead, [ / ] go to
+ * the previous / next clip, K keeps, X discards, Escape goes back to the board.
  */
 export function ClipEditor({
   project,
@@ -77,7 +67,8 @@ export function ClipEditor({
   clipId: number;
   /** The board's order, for previous / next. */
   order: number[];
-  onOpen: (id: number) => void;
+  /** Opens another clip; `order` replaces the order when clips were added or removed. */
+  onOpen: (id: number, order?: number[]) => void;
   onClose: () => void;
 }) {
   const update = useProject((s) => s.update);
@@ -99,7 +90,7 @@ export function ClipEditor({
 
   useEffect(() => {
     let live = true;
-    loadText(project).then(
+    spokenText(project).then(
       (t) => live && setText(t),
       (e) => toast(String(e), "error"),
     );
@@ -209,6 +200,43 @@ export function ClipEditor({
     [clipId, update],
   );
 
+  /** Adds a clip made by hand (kept, scored) and opens it. */
+  const createClip = useCallback(
+    async (range: Range | null) => {
+      const p = useProject.getState().project;
+      if (!range || !p) return;
+      let moment = null;
+      try {
+        [moment] = await scoreClips(p.id, normalized(p.transcription), p.finder, [[range.in_ms, range.out_ms]]);
+      } catch (e) {
+        toast(`Couldn't score the clip: ${String(e)}`, "error");
+      }
+      const latest = useProject.getState().project;
+      if (latest?.id !== p.id) return;
+      const added = manualClip(latest.clips, range.in_ms, range.out_ms, moment);
+      update({ clips: [...latest.clips, added] });
+      onOpen(added.id, [...order, added.id]);
+    },
+    [order, onOpen, update],
+  );
+
+  const newClipHere = useCallback(() => {
+    if (!text) return;
+    const ms = video.current ? video.current.currentTime * 1000 : currentMs;
+    void createClip(clipAround(text, ms, project.finder, durationMs));
+  }, [text, currentMs, project.finder, durationMs, createClip]);
+
+  /** Removes a clip made by hand and opens the next one (or goes back). */
+  const remove = useCallback(() => {
+    const p = useProject.getState().project;
+    if (!p) return;
+    update({ clips: p.clips.filter((c) => c.id !== clipId) });
+    const rest = order.filter((id) => id !== clipId);
+    const next = order[index + 1] ?? order[index - 1];
+    if (next !== undefined) onOpen(next, rest);
+    else onClose();
+  }, [clipId, order, index, onOpen, onClose, update]);
+
   // Keys, unless typing or on a button (Space would press it).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -228,6 +256,7 @@ export function ClipEditor({
         void commit(range);
       } else if (e.key === "[" && index > 0) onOpen(order[index - 1]);
       else if (e.key === "]" && index >= 0 && index < order.length - 1) onOpen(order[index + 1]);
+      else if (e.key === "n") newClipHere();
       else if (e.key === "k") setStatus("kept");
       else if (e.key === "x") setStatus("discarded");
       else if (e.key === "Escape") onClose();
@@ -236,7 +265,7 @@ export function ClipEditor({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shown, text, durationMs, currentMs, index, order, onOpen, onClose, playClip, commit, setStatus]);
+  }, [shown, text, durationMs, currentMs, index, order, onOpen, onClose, playClip, commit, setStatus, newClipHere]);
 
   if (!clip || !shown) return null;
   const length = shown.out_ms - shown.in_ms;
@@ -275,6 +304,9 @@ export function ClipEditor({
           {note && <span className="editor-warning"> · {note}</span>}
         </span>
         <span className="editor-spacer" />
+        <Button variant="ghost" size="sm" icon={Plus} onClick={newClipHere} disabled={!text} title="A new clip at the playhead (N)">
+          New clip here
+        </Button>
         {m && (
           <>
             <Button ref={whyButton} variant="ghost" size="sm" icon={Info} onClick={() => setWhy((w) => !w)} aria-expanded={why}>
@@ -285,7 +317,11 @@ export function ClipEditor({
             </Popover>
           </>
         )}
-        {clip.status === "discarded" ? (
+        {clip.source === "manual" ? (
+          <Button variant="secondary" size="sm" icon={Trash2} onClick={remove}>
+            Delete
+          </Button>
+        ) : clip.status === "discarded" ? (
           <Button variant="secondary" size="sm" icon={RotateCcw} onClick={() => setStatus("discarded")}>
             Restore
           </Button>
@@ -330,7 +366,13 @@ export function ClipEditor({
             <span className="editor-hint">I / O set the in / out point at the playhead</span>
           </div>
         </div>
-        <ClipWords text={text} clip={shown} currentMs={currentMs} onSeek={seek} />
+        <ClipWords
+          text={text}
+          clip={shown}
+          currentMs={currentMs}
+          onSeek={seek}
+          onMake={(a, b) => text && void createClip(clipFromWords(text, a, b, durationMs))}
+        />
       </div>
 
       <ClipTimeline
@@ -349,19 +391,26 @@ export function ClipEditor({
   );
 }
 
-/** The clip's words with a sentence of context; the spoken word is highlighted, a click seeks. */
+/**
+ * The clip's words with a sentence of context; the spoken word is highlighted, a click
+ * seeks, and dragging across words offers to make a clip of their sentences.
+ */
 function ClipWords({
   text,
   clip,
   currentMs,
   onSeek,
+  onMake,
 }: {
   text: SpokenText | null;
   clip: Range;
   currentMs: number;
   onSeek: (ms: number) => void;
+  onMake: (from: number, to: number) => void;
 }) {
   const list = useRef<HTMLDivElement>(null);
+  const [selection, setSelection] = useState<[number, number] | null>(null);
+  const [selecting, setSelecting] = useState(false);
   const range = text ? contextWords(text, clip) : null;
   const inside = text ? clipWords(text.words, clip) : null;
   const spoken = text ? wordIndexAt(text.words, currentMs) : -1;
@@ -375,29 +424,70 @@ function ClipWords({
     list.current?.querySelector(".word.current")?.scrollIntoView({ block: "nearest" });
   }, [current]);
 
+  // A press on one word seeks; a drag across words selects them.
+  useEffect(() => {
+    if (!selecting) return;
+    const onUp = () => {
+      setSelecting(false);
+      if (selection && selection[0] === selection[1] && text) {
+        onSeek(text.words[selection[0]].start_ms);
+        setSelection(null);
+      }
+    };
+    window.addEventListener("pointerup", onUp);
+    return () => window.removeEventListener("pointerup", onUp);
+  }, [selecting, selection, text, onSeek]);
+
   if (!text) return <div className="editor-words muted">Reading the transcript…</div>;
   if (!range) return <div className="editor-words muted">No words here.</div>;
   const sentences = text.sentences.filter((s) => s.last >= range[0] && s.first <= range[1]);
+  const [lo, hi] = selection ? [Math.min(...selection), Math.max(...selection)] : [-1, -1];
   return (
-    <div className="editor-words" ref={list} aria-label="Clip text">
-      {sentences.map((s) => (
-        <p key={s.first} className="editor-sentence">
-          {text.words.slice(s.first, s.last + 1).map((w, k) => {
-            const i = s.first + k;
-            const inClip = inside !== null && i >= inside[0] && i <= inside[1];
-            return (
-              <span
-                key={i}
-                className={["word", !inClip && "outside", i === current && "current"].filter(Boolean).join(" ")}
-                onClick={() => onSeek(w.start_ms)}
-              >
-                {w.text}{" "}
-              </span>
-            );
-          })}
-          {s.ends === "pause" || s.ends === "weak_pause" ? <span className="editor-pause" title="A pause, no punctuation here" /> : null}
-        </p>
-      ))}
+    <div className="editor-side">
+      {selection && lo !== hi && !selecting && (
+        <div className="editor-selection">
+          <span>Make a clip of these sentences?</span>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Plus}
+            onClick={() => {
+              onMake(lo, hi);
+              setSelection(null);
+            }}
+          >
+            Make clip
+          </Button>
+          <IconButton icon={X} label="Clear the selection" size="sm" onClick={() => setSelection(null)} />
+        </div>
+      )}
+      <div className="editor-words" ref={list} aria-label="Clip text">
+        {sentences.map((s) => (
+          <p key={s.first} className="editor-sentence">
+            {text.words.slice(s.first, s.last + 1).map((w, k) => {
+              const i = s.first + k;
+              const inClip = inside !== null && i >= inside[0] && i <= inside[1];
+              const cls = ["word", !inClip && "outside", i === current && "current", i >= lo && i <= hi && "selected"];
+              return (
+                <span
+                  key={i}
+                  className={cls.filter(Boolean).join(" ")}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    setSelecting(true);
+                    setSelection([i, i]);
+                  }}
+                  onPointerEnter={() => selecting && setSelection((sel) => (sel ? [sel[0], i] : [i, i]))}
+                >
+                  {w.text}{" "}
+                </span>
+              );
+            })}
+            {s.ends === "pause" || s.ends === "weak_pause" ? <span className="editor-pause" title="A pause, no punctuation here" /> : null}
+          </p>
+        ))}
+      </div>
     </div>
   );
 }

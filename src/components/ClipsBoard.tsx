@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Check, Film, Info, Pencil, RotateCcw, SlidersHorizontal, X } from "lucide-react";
+import { Check, Film, Info, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { clipAround } from "../lib/clipEdit";
 import {
   Clip,
   ClipFilter,
@@ -16,10 +17,12 @@ import {
   findMoments,
   findRequest,
   firstLine,
+  manualClip,
   fixRange,
   mergeFound,
   scoreClips,
   topReasons,
+  spokenText,
   untouched,
   withMoments,
 } from "../lib/clips";
@@ -103,6 +106,27 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Adds a clip by hand after the selected one (or at the start) and opens it. */
+  async function addClip() {
+    try {
+      const text = await spokenText(project);
+      const after = clips.find((c) => c.id === selected)?.out_ms ?? 0;
+      const range = clipAround(text, after, project.finder, project.video.duration_ms);
+      if (!range) return;
+      const [moment] = await scoreClips(project.id, normalized(project.transcription), project.finder, [[range.in_ms, range.out_ms]]);
+      const latest = useProject.getState().project;
+      if (latest?.id !== project.id) return;
+      const added = manualClip(latest.clips, range.in_ms, range.out_ms, moment);
+      update({ clips: [...latest.clips, added] });
+      setSelected(added.id);
+      onEdit?.(added.id, [...shown.map((c) => c.id), added.id]);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  const remove = (id: number) => update({ clips: clips.filter((c) => c.id !== id) });
+
   const setStatus = (id: number, status: Clip["status"]) =>
     update({
       clips: clips.map((c) => (c.id === id ? { ...c, status: c.status === status ? "proposed" : status } : c)),
@@ -136,7 +160,11 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
         clips: clips.map((c) => (c.id === selected ? { ...c, status: "proposed" } : c)),
       });
     else if (key === "i") setWhy(selected);
-    else if (e.key === "Enter" && onEdit) onEdit(selected, shown.map((c) => c.id));
+    else if (e.key === "Enter" && onEdit)
+      onEdit(
+        selected,
+        shown.map((c) => c.id),
+      );
     else return;
     e.preventDefault();
   }
@@ -154,6 +182,9 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
         <Tabs label="Show" value={filter} tabs={tabs} onChange={setFilter} />
         <div className="board-tools">
           <Select label="Sort" value={sort} onChange={setSort} options={SORTS} />
+          <Button variant="secondary" size="sm" icon={Plus} onClick={() => void addClip()} title="A new clip after the selected one">
+            Add clip
+          </Button>
           <Button
             ref={settingsButton}
             variant="secondary"
@@ -204,8 +235,16 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
             why={why === c.id}
             onSelect={() => setSelected(c.id)}
             onStatus={(s) => setStatus(c.id, s)}
+            onDelete={() => remove(c.id)}
             onWhy={(open) => setWhy(open ? c.id : null)}
-            onEdit={onEdit && (() => onEdit(c.id, shown.map((x) => x.id)))}
+            onEdit={
+              onEdit &&
+              (() =>
+                onEdit(
+                  c.id,
+                  shown.map((x) => x.id),
+                ))
+            }
           />
         ))}
       </div>
@@ -234,6 +273,7 @@ function ClipCard({
   why,
   onSelect,
   onStatus,
+  onDelete,
   onWhy,
   onEdit,
 }: {
@@ -244,6 +284,8 @@ function ClipCard({
   why: boolean;
   onSelect: () => void;
   onStatus: (status: Clip["status"]) => void;
+  /** Removes a clip made by hand. */
+  onDelete: () => void;
   onWhy: (open: boolean) => void;
   onEdit?: () => void;
 }) {
@@ -305,7 +347,11 @@ function ClipCard({
               pressed={kept}
               onClick={() => onStatus("kept")}
             />
-            <IconButton icon={X} label="Discard" shortcut="X" size="sm" onClick={() => onStatus("discarded")} />
+            {clip.source === "manual" ? (
+              <IconButton icon={Trash2} label="Delete" size="sm" onClick={onDelete} />
+            ) : (
+              <IconButton icon={X} label="Discard" shortcut="X" size="sm" onClick={() => onStatus("discarded")} />
+            )}
           </>
         )}
         <span className="clip-actions-gap" />

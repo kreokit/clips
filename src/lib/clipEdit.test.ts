@@ -4,6 +4,8 @@ import { DEFAULT_FINDER } from "./clips";
 import {
   LEAD_MS,
   TAIL_MS,
+  clipAround,
+  clipFromWords,
   clipView,
   clipWords,
   contextWords,
@@ -131,5 +133,31 @@ describe("editor view", () => {
     expect(view.startMs).toBe(50_000);
     expect(view.msPerPx).toBe(50); // 50 s in 1000 px
     expect(clipView({ in_ms: 2_000, out_ms: 30_000 }, 1000, 35_000).startMs).toBe(0);
+  });
+});
+
+describe("new clips", () => {
+  const t = text(); // three sentences of ~1.4 s, 1 s apart
+  const d = 20_000;
+
+  it("start at the sentence at the playhead and grow by whole sentences towards the target", () => {
+    const finder = { ...DEFAULT_FINDER, target_ms: 3_000, max_ms: 10_000 };
+    const r = clipAround(t, t.words[4].start_ms, finder, d)!;
+    expect(r.in_ms).toBe(inPointBefore(t.words, 3));
+    expect(r.out_ms).toBe(outPointAfter(t.words, 8, d)); // one sentence is too short, two reach the target
+    const short = clipAround(t, 0, { ...finder, target_ms: 1_000 }, d)!;
+    expect(short.out_ms).toBe(outPointAfter(t.words, 2, d));
+    // Never over the longest length.
+    const capped = clipAround(t, 0, { ...finder, target_ms: 60_000, max_ms: 3_500 }, d)!;
+    expect(capped.out_ms - capped.in_ms).toBeLessThanOrEqual(3_500);
+    // After the last sentence: the last one.
+    expect(clipAround(t, 99_000, finder, d)!.in_ms).toBe(inPointBefore(t.words, 6));
+    expect(clipAround({ ...t, sentences: [] }, 0, finder, d)).toBeNull();
+  });
+
+  it("widen selected words to whole sentences, either way round", () => {
+    expect(clipFromWords(t, 4, 7, d)).toEqual({ in_ms: inPointBefore(t.words, 3), out_ms: outPointAfter(t.words, 8, d) });
+    expect(clipFromWords(t, 7, 4, d)).toEqual(clipFromWords(t, 4, 7, d));
+    expect(clipFromWords(t, 1, 1, d)).toEqual({ in_ms: inPointBefore(t.words, 0), out_ms: outPointAfter(t.words, 2, d) });
   });
 });

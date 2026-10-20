@@ -81,7 +81,7 @@ export function ProjectView() {
           project={project}
           clipId={editing.id}
           order={editing.order}
-          onOpen={(id) => setEditing({ ...editing, id })}
+          onOpen={(id, order) => setEditing({ id, order: order ?? editing.order })}
           onClose={() => setEditing(null)}
         />
       )}

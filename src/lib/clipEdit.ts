@@ -175,3 +175,37 @@ export function sentenceMarks(text: SpokenText): { ms: number; kind: Boundary }[
     return { ms: next ? (end + next.start_ms) / 2 : end, kind: s.ends };
   });
 }
+
+/** Whole sentences `a..=b` as a clip, with the finder's padding. */
+function sentencesClip(text: SpokenText, a: number, b: number, durationMs: number): Range {
+  return {
+    in_ms: inPointBefore(text.words, text.sentences[a].first),
+    out_ms: outPointAfter(text.words, text.sentences[b].last, durationMs),
+  };
+}
+
+/**
+ * A new clip at `ms`: the sentence there (or the next one), with whole sentences added
+ * after it while the clip is shorter than the target and stays within the longest
+ * length. Null without sentences.
+ */
+export function clipAround(text: SpokenText, ms: number, finder: FinderSettings, durationMs: number): Range | null {
+  if (text.sentences.length === 0) return null;
+  let a = text.sentences.findIndex((s) => s.end_ms >= ms);
+  if (a < 0) a = text.sentences.length - 1;
+  let b = a;
+  const length = (x: number, y: number) => {
+    const r = sentencesClip(text, x, y, durationMs);
+    return r.out_ms - r.in_ms;
+  };
+  while (b + 1 < text.sentences.length && length(a, b) < finder.target_ms && length(a, b + 1) <= finder.max_ms) b++;
+  return sentencesClip(text, a, b, durationMs);
+}
+
+/** A clip from selected words `from..=to`, widened to the whole sentences they're in. */
+export function clipFromWords(text: SpokenText, from: number, to: number, durationMs: number): Range | null {
+  const [lo, hi] = from <= to ? [from, to] : [to, from];
+  const a = text.sentences.findIndex((s) => s.first <= lo && lo <= s.last);
+  const b = text.sentences.findIndex((s) => s.first <= hi && hi <= s.last);
+  return a < 0 || b < 0 ? null : sentencesClip(text, a, b, durationMs);
+}

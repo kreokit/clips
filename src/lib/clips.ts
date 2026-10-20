@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { TranscriptionSettings } from "./projects";
+import type { Project, TranscriptionSettings } from "./projects";
+import { normalized } from "./transcription";
 
 /** src-tauri/src/moments.rs `FinderSettings`: what the moment finder looks for. */
 export interface FinderSettings {
@@ -204,4 +205,18 @@ export function fixRange(f: FinderSettings): FinderSettings {
   const max_ms = Math.max(f.max_ms, min_ms + 5_000);
   const target_ms = Math.min(Math.max(f.target_ms, min_ms), max_ms);
   return { ...f, min_ms, max_ms, target_ms };
+}
+
+const texts = new Map<string, Promise<SpokenText>>();
+/** The transcript's words and sentences, read once per project and transcript settings. */
+export function spokenText(project: Project): Promise<SpokenText> {
+  const settings = normalized(project.transcription);
+  const key = `${project.id} ${JSON.stringify(settings)}`;
+  let text = texts.get(key);
+  if (!text) {
+    text = transcriptText(project.id, settings);
+    text.catch(() => texts.delete(key));
+    texts.set(key, text);
+  }
+  return text;
 }
