@@ -16,6 +16,7 @@ import {
   findMoments,
   findRequest,
   firstLine,
+  fixRange,
   mergeFound,
   scoreClips,
   topReasons,
@@ -46,7 +47,7 @@ const COUNTS = ["auto", "5", "10", "15", "20", "30"] as const;
  * and the finder's settings with "Find again". Finds by itself the first time.
  * Keys: arrows move, K keeps, X discards, U undoes, I explains, Enter edits.
  */
-export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id: number) => void }) {
+export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id: number, order: number[]) => void }) {
   const update = useProject((s) => s.update);
   const [filter, setFilter] = useState<ClipFilter>("all");
   const [sort, setSort] = useState<ClipSort>("score");
@@ -135,7 +136,7 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
         clips: clips.map((c) => (c.id === selected ? { ...c, status: "proposed" } : c)),
       });
     else if (key === "i") setWhy(selected);
-    else if (e.key === "Enter" && onEdit) onEdit(selected);
+    else if (e.key === "Enter" && onEdit) onEdit(selected, shown.map((c) => c.id));
     else return;
     e.preventDefault();
   }
@@ -204,7 +205,7 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
             onSelect={() => setSelected(c.id)}
             onStatus={(s) => setStatus(c.id, s)}
             onWhy={(open) => setWhy(open ? c.id : null)}
-            onEdit={onEdit && (() => onEdit(c.id))}
+            onEdit={onEdit && (() => onEdit(c.id, shown.map((x) => x.id)))}
           />
         ))}
       </div>
@@ -445,12 +446,4 @@ function FinderPanel({
       </div>
     </div>
   );
-}
-
-/** Keeps shortest ≤ target ≤ longest, the longest at least 5 s over the shortest. */
-export function fixRange(f: FinderSettings): FinderSettings {
-  const min_ms = Math.min(f.min_ms, 175_000);
-  const max_ms = Math.max(f.max_ms, min_ms + 5_000);
-  const target_ms = Math.min(Math.max(f.target_ms, min_ms), max_ms);
-  return { ...f, min_ms, max_ms, target_ms };
 }

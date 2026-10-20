@@ -5,6 +5,7 @@ import { describeShape, fileName, formatBytes, formatDuration, formatFps } from 
 import { closeProject, useProject } from "../store/project";
 import { Transcript, cancelJob, normalized } from "../lib/transcription";
 import { Button, Dialog, Tabs, TextInput, toast } from "../ui";
+import { ClipEditor } from "./ClipEditor";
 import { ClipsBoard } from "./ClipsBoard";
 import { Thumbnail } from "./Thumbnail";
 import { TranscribePanel } from "./TranscribePanel";
@@ -38,6 +39,8 @@ export function ProjectView() {
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [tab, setTab] = useState<Tab>("clips");
+  // The clip being edited, and the board's order for previous / next.
+  const [editing, setEditing] = useState<{ id: number; order: number[] } | null>(null);
   const onRunningChange = useCallback((r: boolean) => setRunning(r), []);
   const onTranscript = useCallback((t: Transcript | null, fresh: boolean) => {
     setTranscript(t);
@@ -73,7 +76,16 @@ export function ProjectView() {
         }
         onHome={home}
       />
-      <main className="project-main">
+      {board && editing && (
+        <ClipEditor
+          project={project}
+          clipId={editing.id}
+          order={editing.order}
+          onOpen={(id) => setEditing({ ...editing, id })}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      <main className="project-main" hidden={Boolean(board && editing)}>
         {board && (
           <div className="project-tabs">
             <Tabs
@@ -87,7 +99,7 @@ export function ProjectView() {
             />
           </div>
         )}
-        {showBoard && <ClipsBoard project={project} />}
+        {showBoard && <ClipsBoard project={project} onEdit={(id, order) => setEditing({ id, order })} />}
         {/* Kept mounted on the Clips tab: it owns a running transcription. */}
         <div className="project-steps" hidden={showBoard}>
           <div className="project-card">

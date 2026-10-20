@@ -197,3 +197,11 @@ export function applyScores(latest: Clip[], scored: Clip[], moments: (Moment | n
     return i < 0 ? c : { ...c, moment: moments[i] ?? null };
   });
 }
+
+/** Keeps shortest ≤ target ≤ longest, the longest at least 5 s over the shortest. */
+export function fixRange(f: FinderSettings): FinderSettings {
+  const min_ms = Math.min(f.min_ms, 175_000);
+  const max_ms = Math.max(f.max_ms, min_ms + 5_000);
+  const target_ms = Math.min(Math.max(f.target_ms, min_ms), max_ms);
+  return { ...f, min_ms, max_ms, target_ms };
+}

@@ -1,0 +1,347 @@
+/* The clip editor: header, video and words, timeline (timeline styles from KreoKit Captions). */
+
+
+.timeline {
+  height: var(--size-timeline);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-1);
+  border-top: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.timeline-zoom {
+  width: 120px;
+  padding: 0 var(--space-1);
+}
+
+.timeline-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 var(--space-2);
+  background: var(--color-border);
+}
+
+.timeline-hint {
+  margin-left: auto;
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+}
+
+.timeline-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-stage);
+  cursor: text;
+  touch-action: none;
+  outline-offset: -2px;
+}
+
+.timeline-ruler {
+  position: relative;
+  height: 22px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.timeline-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  padding: 4px 0 0 5px;
+  border-left: 1px solid var(--color-border-strong);
+  font: 500 10px/12px var(--font-ui);
+  color: var(--color-text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.timeline-waveform {
+  display: block;
+  margin: 4px 0;
+  pointer-events: none;
+}
+
+.timeline-track {
+  position: relative;
+  height: 40px;
+}
+
+.timeline-block {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  overflow: hidden;
+}
+
+.timeline-block:hover {
+  border-color: var(--color-text-3);
+}
+
+.timeline-block.playing {
+  background: var(--color-border-strong);
+}
+
+.timeline-block.selected {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+}
+
+.timeline-block-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
+  font: var(--text-meta);
+  font-weight: 500;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Edge handles: resize cursor, a visible grip on hover / selection. */
+.timeline-block-edge {
+  flex: none;
+  align-self: stretch;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.timeline-block:hover .timeline-block-edge,
+.timeline-block.selected .timeline-block-edge {
+  background: var(--color-border-strong);
+}
+
+.timeline-block.selected .timeline-block-edge {
+  background: var(--color-accent);
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+.timeline-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 10px;
+  height: 8px;
+  background: var(--color-accent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* Clip editor */
+
+.editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) var(--size-timeline);
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+}
+
+.editor-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.editor-count,
+.editor-length {
+  color: var(--color-text-2);
+}
+
+.editor-warning {
+  color: var(--color-warning);
+}
+
+.editor-spacer {
+  flex: 1;
+}
+
+.editor-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  min-height: 0;
+}
+
+.editor-player {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-stage);
+}
+
+.editor-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.editor-stage video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  cursor: pointer;
+}
+
+.editor-video-error {
+  position: absolute;
+  inset: auto var(--space-6) var(--space-6);
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-2);
+}
+
+.editor-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+}
+
+.editor-time {
+  color: var(--color-text-2);
+}
+
+.editor-hint {
+  margin-left: auto;
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+}
+
+.editor-words {
+  overflow-y: auto;
+  padding: var(--space-4);
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  line-height: 24px;
+}
+
+.editor-words.muted {
+  color: var(--color-text-3);
+}
+
+.editor-sentence {
+  margin: 0 0 var(--space-3);
+}
+
+.editor-words .word {
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.editor-words .word:hover {
+  background: var(--color-surface-2);
+}
+
+.editor-words .word.outside {
+  color: var(--color-text-3);
+}
+
+.editor-words .word.current {
+  background: var(--color-accent-tint);
+  color: var(--color-text);
+}
+
+/* A sentence end found from a pause, not punctuation. */
+.editor-pause {
+  display: inline-block;
+  width: 8px;
+  height: 12px;
+  margin-left: 2px;
+  border-left: 1px dashed var(--color-text-3);
+  vertical-align: middle;
+}
+
+/* Sentence marks on the timeline: solid at punctuation, dashed at pauses. */
+.timeline-mark {
+  position: absolute;
+  top: 22px;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--color-border-strong);
+  pointer-events: none;
+}
+
+.timeline-mark.pause,
+.timeline-mark.weak_pause {
+  border-left-style: dashed;
+}
+
+.timeline-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-3);
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+}
+
+.mark-sample {
+  display: inline-block;
+  width: 0;
+  height: 12px;
+  margin-left: var(--space-2);
+  border-left: 1px solid var(--color-text-3);
+}
+
+.mark-sample.pause {
+  border-left-style: dashed;
+}
+
+.clip-block {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+}
+
+.clip-block .timeline-block-edge {
+  width: 8px;
+  background: var(--color-accent);
+}

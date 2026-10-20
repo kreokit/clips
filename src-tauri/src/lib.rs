@@ -65,11 +65,20 @@ async fn list_projects(app: AppHandle) -> Result<Vec<ProjectEntry>, String> {
     blocking(move || Ok(projects::list(&root))).await
 }
 
+/// Lets the webview play the project's video (the asset protocol serves only files
+/// allowed this way, besides the thumbnails).
+fn allow_video(app: &AppHandle, project: Project) -> Result<Project, String> {
+    app.asset_protocol_scope()
+        .allow_file(&project.video_path)
+        .map_err(|e| e.to_string())?;
+    Ok(project)
+}
+
 /// Opens the project of the video at `path`, creating it on first import.
 #[tauri::command]
 async fn open_video(app: AppHandle, path: String) -> Result<Project, String> {
     let root = projects_root(&app)?;
-    blocking(move || {
+    let project = blocking(move || {
         projects::open_video(
             &root,
             &PathBuf::from(path),
@@ -77,14 +86,16 @@ async fn open_video(app: AppHandle, path: String) -> Result<Project, String> {
             projects::now_ms(),
         )
     })
-    .await
+    .await?;
+    allow_video(&app, project)
 }
 
 /// Opens a project from Home's list.
 #[tauri::command]
 async fn open_project(app: AppHandle, id: String) -> Result<Project, String> {
     let root = projects_root(&app)?;
-    blocking(move || projects::open(&root, &id, projects::now_ms())).await
+    let project = blocking(move || projects::open(&root, &id, projects::now_ms())).await?;
+    allow_video(&app, project)
 }
 
 /// The autosave: writes the project and returns it with `updated_at` set.
@@ -97,7 +108,7 @@ async fn save_project(app: AppHandle, project: Project) -> Result<Project, Strin
 #[tauri::command]
 async fn locate_video(app: AppHandle, id: String, path: String) -> Result<Project, String> {
     let root = projects_root(&app)?;
-    blocking(move || {
+    let project = blocking(move || {
         projects::locate_video(
             &root,
             &id,
@@ -106,7 +117,8 @@ async fn locate_video(app: AppHandle, id: String, path: String) -> Result<Projec
             projects::now_ms(),
         )
     })
-    .await
+    .await?;
+    allow_video(&app, project)
 }
 
 #[tauri::command]

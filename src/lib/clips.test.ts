@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Clip, Moment, applyScores, boardView, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
+import { Clip, DEFAULT_FINDER, Moment, applyScores, boardView, fixRange, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
 
 const moment = (in_ms: number, out_ms: number, score = 50, reasons: [string, boolean][] = []): Moment => ({
   in_ms,
@@ -106,5 +106,13 @@ describe("applyScores", () => {
     expect(out[0].moment).toBeNull(); // clip 3 scored to null
     expect(out[1]).toBe(latest[1]); // moved meanwhile
     expect(out[2]).toBe(latest[2]); // new
+  });
+});
+
+describe("fixRange", () => {
+  it("keeps shortest ≤ target ≤ longest, with 5 s between shortest and longest", () => {
+    expect(fixRange(DEFAULT_FINDER)).toEqual(DEFAULT_FINDER);
+    expect(fixRange({ ...DEFAULT_FINDER, min_ms: 60_000 })).toMatchObject({ min_ms: 60_000, max_ms: 65_000, target_ms: 60_000 });
+    expect(fixRange({ ...DEFAULT_FINDER, target_ms: 90_000 }).target_ms).toBe(60_000);
   });
 });
