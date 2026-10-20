@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ffmpeg;
+use crate::moments::{FinderSettings, Moment};
 use crate::probe::VideoInfo;
 use crate::transcription::Settings;
 
@@ -40,10 +41,50 @@ pub struct Project {
     /// The Transcribe screen's choices (missing in projects made before milestone 2).
     #[serde(default)]
     pub transcription: Settings,
+    /// What the moment finder looks for (milestone 3).
+    #[serde(default)]
+    pub finder: FinderSettings,
+    /// The clips board: proposed, kept and discarded clips, found or made by hand.
+    #[serde(default)]
+    pub clips: Vec<Clip>,
     /// Unix milliseconds.
     pub created_at: u64,
     pub opened_at: u64,
     pub updated_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipStatus {
+    Proposed,
+    Kept,
+    Discarded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipSource {
+    /// Proposed by the moment finder.
+    Found,
+    /// Made by hand.
+    Manual,
+}
+
+/// A clip on the board. Its in/out points are on the video's clock.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Clip {
+    /// Unique within the project.
+    pub id: u32,
+    pub in_ms: u64,
+    pub out_ms: u64,
+    pub status: ClipStatus,
+    pub source: ClipSource,
+    /// The user moved its in or out point; "Find again" leaves it alone.
+    #[serde(default)]
+    pub edited: bool,
+    /// Its score, reasons and words for the current in/out (`None`: no words inside).
+    #[serde(default)]
+    pub moment: Option<Moment>,
 }
 
 /// A project plus what the Home screen needs to show it.
@@ -223,6 +264,8 @@ pub fn open_video(
         video_mtime_ms: mtime,
         video: info,
         transcription: Settings::default(),
+        finder: FinderSettings::default(),
+        clips: Vec::new(),
         created_at: now,
         opened_at: now,
         updated_at: now,
@@ -441,6 +484,40 @@ mod tests {
         assert_eq!(ids, [b.id.as_str(), a.id.as_str()]);
         assert!(!entries[0].video_exists);
         assert!(entries[1].video_exists);
+    }
+
+    #[test]
+    fn clips_are_saved_and_older_projects_have_none() {
+        let (root, video) = setup("clips");
+        let p = open_video(&root, &video, probe_ok, 1).unwrap();
+        assert!(p.clips.is_empty());
+        assert_eq!(p.finder, FinderSettings::default());
+        let clip = Clip {
+            id: 3,
+            in_ms: 1_000,
+            out_ms: 31_000,
+            status: ClipStatus::Kept,
+            source: ClipSource::Manual,
+            edited: true,
+            moment: None,
+        };
+        let with_clips = Project {
+            clips: vec![clip.clone()],
+            ..p.clone()
+        };
+        save(&root, &with_clips, 2).unwrap();
+        assert_eq!(load(&root, &p.id).unwrap().clips, [clip]);
+
+        // A project.json from before milestone 3: no finder settings, no clips.
+        let path = root.join(&p.id).join(PROJECT_FILE);
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        json.as_object_mut().unwrap().remove("clips");
+        json.as_object_mut().unwrap().remove("finder");
+        fs::write(&path, json.to_string()).unwrap();
+        let old = load(&root, &p.id).unwrap();
+        assert!(old.clips.is_empty());
+        assert_eq!(old.finder, FinderSettings::default());
     }
 
     #[test]

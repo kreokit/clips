@@ -63,19 +63,21 @@ pub enum Boundary {
 }
 
 /// A spoken word (sound tags left out).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Token {
     pub start_ms: u64,
     pub end_ms: u64,
     /// As Whisper wrote it.
     pub text: String,
     /// Lowercase letters, digits and apostrophes only ("That's," → "that's").
+    #[serde(skip)]
     pub norm: String,
     /// Index of the Whisper segment it came from.
+    #[serde(skip)]
     pub segment: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Sentence {
     /// First and last word (indices into [`Text::words`], inclusive).
     pub first: usize,
@@ -89,7 +91,7 @@ pub struct Sentence {
 }
 
 /// A transcript as words and sentences, plus its sound tags.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Text {
     pub words: Vec<Token>,
     pub sentences: Vec<Sentence>,

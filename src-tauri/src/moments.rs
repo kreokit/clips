@@ -24,7 +24,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::sentences::{self, Boundary, Text, Token, is_number};
+use crate::sentences::{self, Boundary, Sentence, Text, Token, is_number};
 
 /// What the finder looks for; stored in the project.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,7 +70,7 @@ const SOUND_AFTER_MS: u64 = 2_000;
 /// A next sentence starting within this long after the clip's end may carry on its thought.
 const CARRY_ON_MS: u64 = 600;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FeatureKind {
     Hook,
@@ -90,14 +90,14 @@ const WEIGHTS: [(FeatureKind, u32); 5] = [
 ];
 
 /// One line of "why this clip".
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Reason {
     pub text: String,
     /// Raises the score (else lowers it, or just informs).
     pub good: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Feature {
     pub kind: FeatureKind,
     /// Out of 100 for all features; 0 when the feature isn't judged.
@@ -108,15 +108,18 @@ pub struct Feature {
 }
 
 /// A scored stretch of the video.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Moment {
     pub in_ms: u64,
     pub out_ms: u64,
     /// 0–100.
     pub score: u32,
     pub features: Vec<Feature>,
-    /// The words of the clip.
+    /// The words of the clip; filled in only for the clips picked (see [`with_text`]).
     pub text: String,
+    /// First and last word (indices into [`Text::words`]).
+    #[serde(skip)]
+    words: (usize, usize),
 }
 
 /// What the scores compare against, worked out once per video.
@@ -130,20 +133,58 @@ pub struct Context<'a> {
     rate: f64,
     /// Average loudness of the seconds with speech.
     level: Option<f64>,
+    /// Per second of `loudness`: whether a word is spoken in it.
+    speech: Vec<bool>,
+    /// Per word: the index of its sentence.
+    sentence_of: Vec<usize>,
 }
 
 impl<'a> Context<'a> {
     pub fn new(text: &'a Text, loudness: &'a [f32], language: &'a str, duration_ms: u64) -> Self {
-        let rate = speech_rate(text, 0, text.words.len().saturating_sub(1));
-        let level = mean_level(text, loudness, 0, duration_ms);
-        Self {
+        let mut speech = vec![false; loudness.len()];
+        for w in &text.words {
+            let a = (w.start_ms / 1000) as usize;
+            let b = (w.end_ms.saturating_sub(1) / 1000) as usize;
+            for s in speech.iter_mut().take(b + 1).skip(a) {
+                *s = true;
+            }
+        }
+        let mut sentence_of = vec![0; text.words.len()];
+        for (k, s) in text.sentences.iter().enumerate() {
+            sentence_of[s.first..=s.last].fill(k);
+        }
+        let mut ctx = Self {
             text,
             loudness,
             language,
             duration_ms,
-            rate,
-            level,
-        }
+            rate: speech_rate(text, 0, text.words.len().saturating_sub(1)),
+            level: None,
+            speech,
+            sentence_of,
+        };
+        ctx.level = ctx.mean_level(0, duration_ms);
+        ctx
+    }
+
+    /// Average level of the seconds in `from..to` that have speech.
+    fn mean_level(&self, from_ms: u64, to_ms: u64) -> Option<f64> {
+        let a = (from_ms / 1000) as usize;
+        let b = (to_ms.saturating_sub(1) / 1000) as usize + 1;
+        let (sum, n) = self
+            .loudness
+            .iter()
+            .zip(&self.speech)
+            .take(b)
+            .skip(a)
+            .filter(|&(_, &s)| s)
+            .fold((0.0, 0), |(sum, n), (&l, _)| (sum + l as f64, n + 1));
+        (n > 0).then(|| sum / n as f64)
+    }
+
+    /// The sentence word `i` is in.
+    fn sentence(&self, i: usize) -> &Sentence {
+        &self.text.sentences[self.sentence_of[i]]
     }
 
     fn english(&self) -> bool {
@@ -168,28 +209,6 @@ fn speech_rate(text: &Text, first: usize, last: usize) -> f64 {
         }
     }
     (last + 1 - first) as f64 * 1000.0 / ms.max(1) as f64
-}
-
-/// Average level of the seconds in `from..to` that have speech.
-fn mean_level(text: &Text, loudness: &[f32], from_ms: u64, to_ms: u64) -> Option<f64> {
-    let mut speech = vec![false; loudness.len()];
-    for w in &text.words {
-        if w.end_ms <= from_ms || w.start_ms >= to_ms {
-            continue;
-        }
-        let a = (w.start_ms.max(from_ms) / 1000) as usize;
-        let b = (w.end_ms.min(to_ms).saturating_sub(1) / 1000) as usize;
-        for s in speech.iter_mut().take(b + 1).skip(a) {
-            *s = true;
-        }
-    }
-    let levels: Vec<f64> = loudness
-        .iter()
-        .zip(&speech)
-        .filter(|&(_, &s)| s)
-        .map(|(&l, _)| l as f64)
-        .collect();
-    (!levels.is_empty()).then(|| levels.iter().sum::<f64>() / levels.len() as f64)
 }
 
 // ---- Words ----------------------------------------------------------------------------
@@ -338,12 +357,7 @@ fn hook(ctx: &Context, span: &Span) -> Feature {
     let norms: Vec<&str> = hook.iter().map(|w| w.norm.as_str()).collect();
     let mut value: f64 = 0.3;
 
-    let question = ctx
-        .text
-        .sentences
-        .iter()
-        .find(|s| s.first <= span.first && span.first <= s.last)
-        .is_some_and(|s| s.question);
+    let question = ctx.sentence(span.first).question;
     if question {
         value += 0.3;
         reasons.push(reason("Opens with a question", true));
@@ -473,12 +487,8 @@ fn ending(ctx: &Context, span: &Span) -> Feature {
                 reasons.push(reason("Ends at a short pause, may be mid-thought", false));
             }
         }
-        let last = ctx
-            .text
-            .sentences
-            .iter()
-            .find(|s| s.last == span.last)
-            .is_some_and(|s| s.question);
+        let sentence = ctx.sentence(span.last);
+        let last = sentence.last == span.last && sentence.question;
         if last {
             value -= 0.3;
             reasons.push(reason("Ends on a question", false));
@@ -528,10 +538,7 @@ fn energy(ctx: &Context, span: &Span) -> Feature {
             ));
         }
     }
-    if let (Some(avg), Some(level)) = (
-        ctx.level,
-        mean_level(ctx.text, ctx.loudness, span.in_ms, span.out_ms),
-    ) {
+    if let (Some(avg), Some(level)) = (ctx.level, ctx.mean_level(span.in_ms, span.out_ms)) {
         let diff = level - avg;
         parts.push((0.5 + diff / 6.0).clamp(0.0, 1.0));
         if diff.abs() >= 1.0 {
@@ -664,8 +671,15 @@ fn moment(ctx: &Context, settings: &FinderSettings, span: Span) -> Moment {
         out_ms: span.out_ms,
         score: score.round().clamp(0.0, 100.0) as u32,
         features,
-        text: join(&ctx.text.words[span.first..=span.last]),
+        text: String::new(),
+        words: (span.first, span.last),
     }
+}
+
+/// The moment with its words filled in.
+pub fn with_text(ctx: &Context, mut m: Moment) -> Moment {
+    m.text = join(&ctx.text.words[m.words.0..=m.words.1]);
+    m
 }
 
 /// In point before word `first`: a short lead-in, at most half the gap to the word before.
@@ -761,10 +775,9 @@ pub fn overlaps(a: (u64, u64), b: (u64, u64)) -> bool {
     shared as f64 > MAX_OVERLAP * shorter as f64
 }
 
-/// The best clips, best first: no two overlapping (see [`overlaps`]), at most `count`;
-/// `taken` are clips already on the board (kept or edited) that new ones must not
-/// overlap either.
-pub fn pick(mut all: Vec<Moment>, count: usize, taken: &[(u64, u64)]) -> Vec<Moment> {
+/// The best `count` clips, best first, no two overlapping (see [`overlaps`]) and none
+/// overlapping `avoid` (clips already on the board, kept or discarded).
+pub fn pick(mut all: Vec<Moment>, count: usize, avoid: &[(u64, u64)]) -> Vec<Moment> {
     all.sort_by(|a, b| b.score.cmp(&a.score).then(a.in_ms.cmp(&b.in_ms)));
     let mut picked: Vec<Moment> = Vec::new();
     for m in all {
@@ -772,7 +785,7 @@ pub fn pick(mut all: Vec<Moment>, count: usize, taken: &[(u64, u64)]) -> Vec<Mom
             break;
         }
         let range = (m.in_ms, m.out_ms);
-        let clash = taken.iter().any(|&t| overlaps(t, range))
+        let clash = avoid.iter().any(|&t| overlaps(t, range))
             || picked.iter().any(|p| overlaps((p.in_ms, p.out_ms), range));
         if !clash {
             picked.push(m);
@@ -781,10 +794,19 @@ pub fn pick(mut all: Vec<Moment>, count: usize, taken: &[(u64, u64)]) -> Vec<Mom
     picked
 }
 
-/// Finds the best moments in a transcript.
-pub fn find(ctx: &Context, settings: &FinderSettings, taken: &[(u64, u64)]) -> Vec<Moment> {
-    let count = wanted(settings, ctx.duration_ms).saturating_sub(taken.len());
-    pick(candidates(ctx, settings), count, taken)
+/// Finds the best moments: as many as [`wanted`] minus the `have` clips the board already
+/// counts, none overlapping `avoid`.
+pub fn find(
+    ctx: &Context,
+    settings: &FinderSettings,
+    avoid: &[(u64, u64)],
+    have: usize,
+) -> Vec<Moment> {
+    let count = wanted(settings, ctx.duration_ms).saturating_sub(have);
+    pick(candidates(ctx, settings), count, avoid)
+        .into_iter()
+        .map(|m| with_text(ctx, m))
+        .collect()
 }
 
 /// Scores any stretch (an edited or manual clip): the words whose middle falls inside it.
@@ -802,22 +824,25 @@ pub fn score_range(
     };
     let first = words.iter().position(inside)?;
     let last = words.iter().rposition(inside)?;
-    let starting = ctx.text.sentences.iter().find(|s| s.first == first);
-    let ending = ctx.text.sentences.iter().find(|s| s.last == last);
-    Some(moment(
+    let starting = Some(ctx.sentence(first)).filter(|s| s.first == first);
+    let ending = Some(ctx.sentence(last)).filter(|s| s.last == last);
+    Some(with_text(
         ctx,
-        settings,
-        Span {
-            first,
-            last,
-            in_ms,
-            out_ms: out_ms.max(in_ms + 1),
-            starts: starting.map_or(Boundary::WeakPause, |s| s.starts),
-            ends: ending.map_or(Boundary::WeakPause, |s| s.ends),
-            whole_start: starting.is_some(),
-            whole_end: ending.is_some(),
-            skipped: None,
-        },
+        moment(
+            ctx,
+            settings,
+            Span {
+                first,
+                last,
+                in_ms,
+                out_ms: out_ms.max(in_ms + 1),
+                starts: starting.map_or(Boundary::WeakPause, |s| s.starts),
+                ends: ending.map_or(Boundary::WeakPause, |s| s.ends),
+                whole_start: starting.is_some(),
+                whole_end: ending.is_some(),
+                skipped: None,
+            },
+        ),
     ))
 }
 
@@ -827,11 +852,29 @@ pub fn find_in(
     loudness: &[f32],
     duration_ms: u64,
     settings: &FinderSettings,
-    taken: &[(u64, u64)],
+    avoid: &[(u64, u64)],
+    have: usize,
 ) -> Vec<Moment> {
     let text = sentences::split(transcript);
     let ctx = Context::new(&text, loudness, &transcript.language, duration_ms);
-    find(&ctx, settings, taken)
+    find(&ctx, settings, avoid, have)
+}
+
+/// Scores stretches of a transcript (edited or manual clips); `None` where there are no
+/// words.
+pub fn score_in(
+    transcript: &crate::transcribe::Transcript,
+    loudness: &[f32],
+    duration_ms: u64,
+    settings: &FinderSettings,
+    ranges: &[(u64, u64)],
+) -> Vec<Option<Moment>> {
+    let text = sentences::split(transcript);
+    let ctx = Context::new(&text, loudness, &transcript.language, duration_ms);
+    ranges
+        .iter()
+        .map(|&(a, b)| score_range(&ctx, settings, a, b))
+        .collect()
 }
 
 #[cfg(test)]
@@ -864,6 +907,14 @@ mod tests {
             target_ms: target,
             count: None,
         }
+    }
+
+    /// Every candidate, with its words.
+    fn candidates(ctx: &Context, s: &FinderSettings) -> Vec<Moment> {
+        super::candidates(ctx, s)
+            .into_iter()
+            .map(|m| with_text(ctx, m))
+            .collect()
     }
 
     fn with_ctx<R>(t: &Transcript, loudness: &[f32], f: impl FnOnce(&Context) -> R) -> R {
@@ -921,7 +972,7 @@ mod tests {
         let (t, _) = realistic(3, false);
         let s = settings(20_000, 60_000, 35_000);
         with_ctx(&t, &[], |ctx| {
-            let picked = find(ctx, &s, &[]);
+            let picked = find(ctx, &s, &[], 0);
             assert_eq!(picked.len(), wanted(&s, ctx.duration_ms));
             for (i, a) in picked.iter().enumerate() {
                 for b in &picked[i + 1..] {
@@ -930,10 +981,10 @@ mod tests {
                 }
             }
             // Deterministic.
-            assert_eq!(find(ctx, &s, &[]), picked);
+            assert_eq!(find(ctx, &s, &[], 0), picked);
             // Clips already on the board are avoided and count towards the total.
             let taken = [(picked[0].in_ms, picked[0].out_ms)];
-            let again = find(ctx, &s, &taken);
+            let again = find(ctx, &s, &taken, 1);
             assert_eq!(again.len(), picked.len() - 1);
             assert!(
                 again
@@ -1259,7 +1310,7 @@ mod tests {
         let (t, truth) = realistic(1, true);
         let s = FinderSettings::default();
         with_ctx(&t, &[], |ctx| {
-            let picked = find(ctx, &s, &[]);
+            let picked = find(ctx, &s, &[], 0);
             assert!(!picked.is_empty());
             // Picked clips prefer clean ends: most end at a real sentence end.
             let words = &ctx.text.words;
@@ -1276,6 +1327,39 @@ mod tests {
                 picked.len()
             );
         });
+    }
+
+    #[test]
+    fn two_hours_are_quick() {
+        // ~0.4 s on the dev Mac in a test build (opt-level 1); the limit leaves room for
+        // slow CI runners. Release builds are faster still.
+        // The script (~7.5 minutes here) over and over, for two hours.
+        let (one, _) = realistic(5, false);
+        let span = one.segments.last().unwrap().end_ms + 2_000;
+        let mut t = one.clone();
+        t.segments.clear();
+        let copies = 7_200_000 / span + 1;
+        for k in 0..copies {
+            for seg in &one.segments {
+                let mut seg = seg.clone();
+                for w in &mut seg.words {
+                    w.start_ms += k * span;
+                    w.end_ms += k * span;
+                }
+                seg.start_ms += k * span;
+                seg.end_ms += k * span;
+                t.segments.push(seg);
+            }
+        }
+        let duration = copies * span;
+        let started = std::time::Instant::now();
+        let found = find_in(&t, &[], duration, &FinderSettings::default(), &[], 0);
+        let took = started.elapsed();
+        assert_eq!(
+            found.len(),
+            AUTO_MAX.min(wanted(&FinderSettings::default(), duration))
+        );
+        assert!(took.as_millis() < 3_000, "{took:?}");
     }
 
     /// Prints the moments of a real transcript (not in the repo):
@@ -1296,7 +1380,7 @@ mod tests {
             .map(|b| serde_json::from_slice(&b).unwrap())
             .unwrap_or_default();
         let end = t.segments.last().map_or(0, |s| s.end_ms);
-        let found = find_in(&t, &loudness, end, &FinderSettings::default(), &[]);
+        let found = find_in(&t, &loudness, end, &FinderSettings::default(), &[], 0);
         for m in found {
             eprintln!(
                 "\n{} {}–{} ({} s)",

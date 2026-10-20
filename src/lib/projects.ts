@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Clip, FinderSettings } from "./clips";
 
 /** src-tauri/src/probe.rs `VideoInfo`. */
 export interface VideoInfo {
@@ -33,6 +34,8 @@ export interface Project {
   video_mtime_ms: number;
   video: VideoInfo;
   transcription: TranscriptionSettings;
+  finder: FinderSettings;
+  clips: Clip[];
   created_at: number;
   opened_at: number;
   updated_at: number;

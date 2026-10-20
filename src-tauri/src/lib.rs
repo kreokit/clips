@@ -6,8 +6,6 @@ mod chunks;
 mod cpu;
 mod ffmpeg;
 mod models;
-// Used by the find_moments command (next commit).
-#[allow(dead_code)]
 mod moments;
 mod probe;
 mod projects;
@@ -272,6 +270,80 @@ async fn transcribe(
     result
 }
 
+/// The project's finished transcript for these settings, and its loudness.
+fn finished(
+    app: &AppHandle,
+    id: &str,
+    settings: &Settings,
+) -> Result<(Project, transcription::Output), String> {
+    let (project, dir, video) = transcript_job(app, id)?;
+    let output = transcription::cached(&dir, settings, &video, &chunks::LIMITS)
+        .ok_or("Transcribe the video first.")?;
+    Ok((project, output))
+}
+
+/// The transcript as spoken words and sentences (sound tags apart), for the clip editor.
+#[tauri::command]
+async fn transcript_text(
+    app: AppHandle,
+    id: String,
+    settings: Settings,
+) -> Result<sentences::Text, String> {
+    blocking(move || {
+        Ok(sentences::split(
+            &finished(&app, &id, &settings)?.1.transcript,
+        ))
+    })
+    .await
+}
+
+/// Proposes clips: as many as the finder settings ask for minus the `have` clips already
+/// counted on the board, none overlapping `avoid`.
+#[tauri::command]
+async fn find_moments(
+    app: AppHandle,
+    id: String,
+    settings: Settings,
+    finder: moments::FinderSettings,
+    avoid: Vec<(u64, u64)>,
+    have: usize,
+) -> Result<Vec<moments::Moment>, String> {
+    blocking(move || {
+        let (project, output) = finished(&app, &id, &settings)?;
+        Ok(moments::find_in(
+            &output.transcript,
+            &output.loudness,
+            project.video.duration_ms,
+            &finder,
+            &avoid,
+            have,
+        ))
+    })
+    .await
+}
+
+/// Scores edited or manual clips (`None` for a range without words).
+#[tauri::command]
+async fn score_clips(
+    app: AppHandle,
+    id: String,
+    settings: Settings,
+    finder: moments::FinderSettings,
+    ranges: Vec<(u64, u64)>,
+) -> Result<Vec<Option<moments::Moment>>, String> {
+    blocking(move || {
+        let (project, output) = finished(&app, &id, &settings)?;
+        Ok(moments::score_in(
+            &output.transcript,
+            &output.loudness,
+            project.video.duration_ms,
+            &finder,
+            &ranges,
+        ))
+    })
+    .await
+}
+
 #[tauri::command]
 fn cpu_support() -> cpu::CpuSupport {
     cpu::check()
@@ -333,6 +405,9 @@ pub fn run() {
             cancel,
             transcript_status,
             transcribe,
+            transcript_text,
+            find_moments,
+            score_clips,
             cpu_support,
             quit_app,
             report_problem,
