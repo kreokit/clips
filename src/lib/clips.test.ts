@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Clip, Moment, boardView, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
+import { Clip, Moment, applyScores, boardView, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
 
 const moment = (in_ms: number, out_ms: number, score = 50, reasons: [string, boolean][] = []): Moment => ({
   in_ms,
@@ -95,5 +95,16 @@ describe("card text", () => {
     expect(topReasons(m).map((r) => r.text)).toEqual(["Opens with a question", "Speaks to “you”"]);
     expect(topReasons(m, 3).map((r) => r.text)).toEqual(["Opens with a question", "Speaks to “you”", "Starts with “and”"]);
     expect(topReasons(null)).toEqual([]);
+  });
+});
+
+describe("applyScores", () => {
+  it("updates clips whose in/out are unchanged, matched by id", () => {
+    const scored = [clip(1), clip(2), clip(3)];
+    const latest = [clip(3), clip(2, { in_ms: 5 }), clip(4)];
+    const out = applyScores(latest, scored, [moment(0, 1, 11), moment(0, 1, 22), null]);
+    expect(out[0].moment).toBeNull(); // clip 3 scored to null
+    expect(out[1]).toBe(latest[1]); // moved meanwhile
+    expect(out[2]).toBe(latest[2]); // new
   });
 });

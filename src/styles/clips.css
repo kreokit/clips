@@ -1,0 +1,296 @@
+/* The clips board: filter tabs and tools, then a grid of clip cards. */
+
+.board {
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.board-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.board-bar .ui-tabs {
+  flex: 1;
+  border-bottom: none;
+  padding: 0;
+}
+
+.board-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.board-tools .ui-select {
+  min-width: 150px;
+}
+
+.board-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 400px;
+  color: var(--color-text-2);
+}
+
+.board-empty,
+.board-error {
+  margin: 0;
+  color: var(--color-text-3);
+}
+
+.board-error {
+  color: var(--color-danger);
+}
+
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: var(--space-3);
+  outline: none;
+}
+
+.clip-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  cursor: default;
+  outline: none;
+}
+
+.clip-card:hover {
+  border-color: var(--color-border-strong);
+}
+
+/* Selected: a 2px lime border (an inset outline, so the card doesn't move). */
+.clip-card.selected {
+  border-color: transparent;
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.clip-card.discarded .clip-thumb,
+.clip-card.discarded .clip-body {
+  opacity: 0.45;
+}
+
+.clip-thumb {
+  position: relative;
+}
+
+.clip-thumb-image {
+  aspect-ratio: 16 / 9;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.clip-thumb-image img {
+  object-fit: cover;
+}
+
+.clip-score,
+.clip-length,
+.clip-kept {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
+  font: var(--text-meta);
+  color: var(--color-text);
+}
+
+.clip-score {
+  top: var(--space-2);
+  left: var(--space-2);
+  font-weight: 700;
+}
+
+.clip-kept {
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: 0 4px;
+}
+
+.clip-length {
+  bottom: var(--space-2);
+  right: var(--space-2);
+}
+
+.clip-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) 0;
+  flex: 1;
+}
+
+.clip-time {
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+}
+
+.clip-text {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.clip-reasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.clip-reasons li {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-2);
+}
+
+.clip-reasons li.bad {
+  color: var(--color-warning);
+}
+
+.clip-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2) var(--space-2);
+}
+
+.clip-actions-gap {
+  flex: 1;
+}
+
+/* "Why this clip" */
+
+.why-popover {
+  width: 340px;
+}
+
+.why {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.why-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.why-score {
+  font: var(--text-dialog);
+}
+
+.why-title {
+  font: var(--text-title);
+  color: var(--color-text-2);
+}
+
+.why-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 52px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.why-name {
+  font-weight: 600;
+}
+
+.why-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-surface-3);
+  overflow: hidden;
+}
+
+.why-bar span {
+  display: block;
+  height: 100%;
+  background: var(--color-text-2);
+}
+
+.why-points {
+  text-align: right;
+  font: var(--text-meta);
+  color: var(--color-text-3);
+}
+
+.why-reasons {
+  list-style: none;
+  margin: var(--space-1) 0 0 72px;
+  padding: 0;
+  font: var(--text-meta);
+  font-weight: 400;
+}
+
+.why-reasons li {
+  color: var(--color-text-2);
+}
+
+.why-reasons li::before {
+  content: "+ ";
+  color: var(--color-text-3);
+}
+
+.why-reasons li.bad {
+  color: var(--color-warning);
+}
+
+.why-reasons li.bad::before {
+  content: "– ";
+}
+
+/* Find moments */
+
+.finder-popover {
+  width: 320px;
+}
+
+.finder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.finder-lengths {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.finder-note {
+  margin: 0;
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-3);
+}

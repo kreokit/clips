@@ -174,3 +174,26 @@ export function topReasons(moment: Moment | null, max = 2): Reason[] {
   const bad = all.filter((r) => !r.good && !r.text.startsWith("Hook not judged"));
   return [...good, ...bad].slice(0, max);
 }
+
+/** Path of a clip's thumbnail (the frame `ms` into the video), made on first request. */
+export const clipThumbnail = (id: string, ms: number) => invoke<string>("clip_thumbnail", { id, ms: Math.round(ms) });
+
+/** Clips with fresh scores; `moments` matches `clips` in order. */
+export const withMoments = (clips: Clip[], moments: (Moment | null)[]): Clip[] =>
+  clips.map((c, i) => ({ ...c, moment: moments[i] ?? null }));
+
+/** "12:04–12:39". */
+export function clipRange(c: Clip, format: (ms: number) => string): string {
+  return `${format(c.in_ms)}–${format(c.out_ms)}`;
+}
+
+/**
+ * `latest` with the scores worked out for `scored` (same order as `moments`), for each
+ * clip whose in/out haven't changed since; the rest keep what they had.
+ */
+export function applyScores(latest: Clip[], scored: Clip[], moments: (Moment | null)[]): Clip[] {
+  return latest.map((c) => {
+    const i = scored.findIndex((s) => s.id === c.id && s.in_ms === c.in_ms && s.out_ms === c.out_ms);
+    return i < 0 ? c : { ...c, moment: moments[i] ?? null };
+  });
+}

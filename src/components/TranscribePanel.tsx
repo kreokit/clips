@@ -34,9 +34,18 @@ const STATUS_DELAY_MS = 300;
 
 /**
  * The Processing screen's transcription step: settings, then progress with cancel (a
- * cancelled run resumes), then the transcript. Milestone 3 adds the moment finder after it.
+ * cancelled run resumes), then the transcript. Reports the transcript for the current
+ * settings (null if there is none), `fresh` when a run just made it.
  */
-export function TranscribePanel({ project, onRunningChange }: { project: Project; onRunningChange: (running: boolean) => void }) {
+export function TranscribePanel({
+  project,
+  onRunningChange,
+  onTranscript,
+}: {
+  project: Project;
+  onRunningChange: (running: boolean) => void;
+  onTranscript: (transcript: Transcript | null, fresh: boolean) => void;
+}) {
   const update = useProject((s) => s.update);
   const settings = project.transcription;
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -67,6 +76,14 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
   );
 
   useEffect(() => onRunningChange(running), [running, onRunningChange]);
+
+  // A run sets this before its transcript arrives, so the report says it's new.
+  const fresh = useRef(false);
+  const reported = status?.transcript ?? null;
+  useEffect(() => {
+    onTranscript(reported, fresh.current);
+    fresh.current = false;
+  }, [reported, onTranscript]);
 
   useEffect(() => {
     if (running) return;
@@ -103,6 +120,7 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
       }
       const transcript = await transcribe(project.id, sent, (p) => show({ kind: "running", view: describeProgress(p) }));
       if (runId.current === id) {
+        fresh.current = true;
         setStatus((s) => ({ transcript, saved_until_ms: 0, parts: s?.parts ?? 1 }));
         setEditing(false);
         setRun({ kind: "idle" });
@@ -198,7 +216,7 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
   );
 }
 
-/** The finished transcript (read-only until milestone 3's clips board). */
+/** The finished transcript (read-only). */
 function TranscriptView({ transcript, model, onChange }: { transcript: Transcript; model: keyof typeof MODEL_NAMES; onChange: () => void }) {
   const words = wordCount(transcript);
   return (
@@ -224,7 +242,6 @@ function TranscriptView({ transcript, model, onChange }: { transcript: Transcrip
           ))}
         </ol>
       )}
-      <p className="transcribe-note">Next: finding the best moments (coming in the next build).</p>
     </section>
   );
 }

@@ -13,6 +13,7 @@ export function NumberField({
   max,
   step = 0.5,
   unit,
+  decimals = 1,
 }: {
   value: number;
   onChange: (value: number) => void;
@@ -21,13 +22,17 @@ export function NumberField({
   max: number;
   step?: number;
   unit?: string;
+  /** Digits after the point: 1 (default) or 0 for whole numbers. */
+  decimals?: 0 | 1;
 }) {
-  const shown = value.toFixed(1);
+  const shown = value.toFixed(decimals);
+  const round = (n: number) => (decimals === 0 ? Math.round(n) : Math.round(n * 10) / 10);
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
 
   const commit = () => {
-    const n = parseNumberField(text, min, max);
+    const parsed = parseNumberField(text, min, max);
+    const n = parsed === null ? null : round(parsed);
     if (n === null) setText(shown);
     else if (n !== value) onChange(n);
     else setText(shown);
@@ -49,7 +54,7 @@ export function NumberField({
           else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
             e.preventDefault();
             const by = (e.shiftKey ? step * 10 : step) * (e.key === "ArrowUp" ? 1 : -1);
-            onChange(clamp(Math.round((value + by) * 10) / 10, min, max));
+            onChange(clamp(round(value + by), min, max));
           }
         }}
       />
