@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-20):** Milestones 1 (Scaffold) and 2 (Transcribe long videos) are done and tested. Milestone 3 (moment finder + clips board) is built and waiting for the user's test.
+**Status (2026-10-21):** Milestones 1 (Scaffold) and 2 (Transcribe long videos) are done and tested. Milestone 3 (moment finder + clips board, now with platform presets) is built and waiting for the user's test.
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -46,7 +46,7 @@ Copy (don't reinvent), as listed in the other apps' "Reusable" sections:
 
 1. **Probe + audio extract** (ffmpeg).
 2. **Transcribe** the whole video with word timings (chunked for long videos, progress + cancel, resumable cache per video).
-3. **Moment finder** proposes candidate clips (default 20–60 s).
+3. **Moment finder** proposes candidate clips (default TikTok Rewards 61–90 s; Shorts / Reels 20–60 s).
 4. **User review:** keep/discard candidates, adjust in/out points on the timeline, add manual clips.
 5. **Reframe** each clip to 9:16: detect faces on sampled frames, build a smoothed crop path that follows the active speaker; fallback center crop; manual override.
 6. **Captions** per clip using Captions' styles (positions relative to the 9:16 frame).
@@ -104,7 +104,8 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 ## Moments and clips (milestone 3)
 
-- **Decided 2026-10-20 (user):** sound tags kept as `sounds` for the energy score; the prompt fix (below) in M3; defaults 20–60 s, target 35 s, about one clip per 2 minutes (5–30); the M3 editor shows the 16:9 source (9:16 in M4). Additions: leading fillers ("um", "uh", "you know", "like", "so um") lower the hook and the in point moves past them when the clip stays long enough; a clean ending (punctuation / strong pause) scores, ending mid-thought costs.
+- **Decided 2026-10-20 (user):** sound tags kept as `sounds` for the energy score; the prompt fix (below) in M3; defaults 20–60 s, target 35 s, about one clip per 2 minutes (5–30) (now the Shorts preset; the default became TikTok Rewards, below); the M3 editor shows the 16:9 source (9:16 in M4). Additions: leading fillers ("um", "uh", "you know", "like", "so um") lower the hook and the in point moves past them when the clip stays long enough; a clean ending (punctuation / strong pause) scores, ending mid-thought costs.
+- **Platform presets (decided 2026-10-21, user):** the finder's default is **TikTok Rewards: 61–90 s, target 70 s, about one clip per 3 minutes** (TikTok's Creator Rewards pay only for videos over a minute). **Shorts / Reels: 20–60 s, target 35 s, one per 2 minutes.** **Custom:** the user's own lengths (starts from the current ones). `Platform` + `Platform::preset` in `moments.rs` (TS mirror `PLATFORMS` in `clips.ts`); `FinderSettings.platform` is `None` only in projects saved before presets, and `FinderSettings::upgraded` (run in `projects::load`) gives them the preset their lengths match, else Custom. The settings chosen last are remembered in `<app data>/projects/last-finder.json` (`remember_finder`) for new projects; existing projects keep theirs. Under TikTok Rewards, any clip under 61 s (edited or manual) shows "Under 1 minute — not eligible for TikTok rewards" on its card and in the editor. The button opening the settings reads e.g. "TikTok Rewards · 61–90 s".
 - **Transcript changes** (`transcribe.rs`, `transcription.rs`): removed sound tags are recorded per segment as `sounds` (whether hidden or shown; a segment of only hidden tags keeps them with empty text). The next part's prompt leaves out the previous part's end when it looks unpunctuated (≥ 12 words and no sentence end or no capital but "I"), so Whisper's lowercase mode doesn't spread; after it, the long fixture's uninterrupted run kept its punctuation (83 of 84 sentence ends).
 - **Sentences** (`sentences.rs`, pure): punctuation first (titles never end a sentence; "?", "!", "…" and abbreviations only before a capital: Whisper bleeps swear words as "f!"). Stretches over 20 s / 50 words without a sentence end are cut at pauses scored 1–3 points by length (400 / 700 / 2000 ms, scaled for slow speakers), +1 before a sentence starter, −1 before "and/because…", +2 at a Whisper segment edge, never after "the/to/is…" or before "of/is…" or between numbers; 3 points is a `Pause`. Sentences over 30 s split at their best pause (`WeakPause`). Measured on a real 10-minute talk stripped of punctuation: 0.88 precision, 0.14 recall (2-point pauses were right only half the time, so they don't count). The pause distributions used in the synthetic tests come from that talk (not in the repo); `KREOKIT_TRANSCRIPT=<…/transcript.json> cargo test real_transcript -- --ignored --nocapture` repeats the check, and prints the moments, on any transcript.
 - **Moment finder** (`moments.rs`, pure): every run of whole sentences between min and max; score 0–100 = Hook 25 + Start 15 + Ending 15 + Energy 25 + Length 20, each feature 0–1 with its reasons (English phrase lists; for other languages the hook isn't judged and the rest scale up). Energy compares speech rate and the loudness of speech seconds (`loudness.json`) with the video's average, adds laughter/applause in or up to 2 s after the clip, subtracts silences over 2 s. Picking: best first, at most 20% overlap of the shorter clip, avoiding clips already on the board. `Context` precomputes each word's sentence and the speech seconds: two hours take ~0.4 s in a test build. Clip text is filled only for the picked clips.
@@ -130,7 +131,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
    - `models-v1` is published (2026-10-20). GitHub shows it as "Latest" while it's the only release; mark the app release as latest when it's published (as in Cutout, never link `/releases/latest` for the app before that).
 3. **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips. Built 2026-10-20, waiting for the user's test (see "Moments and clips").
 4. **Reframe:** BlazeFace full-range converted to ONNX in Actions (license verified, mirrored), detection + tracking + smoothing, crop modes, preview.
-5. **Captions + export all:** reuse styles/layout/ASS/burn-in on the 9:16 output, batch export with safe writing.
+5. **Captions + export all:** reuse styles/layout/ASS/burn-in on the 9:16 output, batch export with safe writing. **Verify every exported TikTok clip is > 60.0 s (ffprobe the output file, not the in/out points); never ship a 59.9 s clip.** Keyframe snapping, frame rounding or audio trimming must not shorten a 61 s clip below 60.0 s.
 6. **Release:** reuse the release workflow, `--self-test` (transcribe a short fixture, find ≥1 moment, reframe, export one clip and verify size/duration), draft pre-release v0.1.0-alpha.
 
 ## Tests (our oracle)
