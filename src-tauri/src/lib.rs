@@ -196,7 +196,7 @@ fn transcript_job(
 struct TranscriptStatus {
     transcript: Option<Transcript>,
     finished_parts: usize,
-    /// About how many parts the video has.
+    /// How many parts the video has (estimated until the audio has been read once).
     parts: usize,
 }
 
@@ -209,11 +209,13 @@ async fn transcript_status(
     blocking(move || {
         let (_, dir, video) = transcript_job(&app, &id)?;
         let limits = &chunks::LIMITS;
+        let (finished, parts) = transcription::finished_parts(&dir, &settings, &video, limits);
         Ok(TranscriptStatus {
             transcript: transcription::cached(&dir, &settings, &video, limits)
                 .map(|o| o.transcript),
-            finished_parts: transcription::finished_parts(&dir, &settings, &video, limits),
-            parts: video.duration_ms.div_ceil(limits.target_ms).max(1) as usize,
+            finished_parts: finished,
+            parts: parts
+                .unwrap_or_else(|| video.duration_ms.div_ceil(limits.target_ms).max(1) as usize),
         })
     })
     .await
@@ -239,7 +241,7 @@ async fn transcribe(
         let (project, dir, video) = transcript_job(&app, &id)?;
         let dirs = model_dirs(&app)?;
         let _awake = awake::KeepAwake::new("transcribing");
-        let mut audio = audio::AudioStream::open(&PathBuf::from(&project.video_path))?;
+        let video_path = PathBuf::from(&project.video_path);
         let load = || {
             let path = models::resolve(settings.model, &dirs, &cancel, |_| {})?
                 .ok_or("The model isn't downloaded yet.")?;
@@ -251,7 +253,7 @@ async fn transcribe(
             &settings,
             &video,
             &chunks::LIMITS,
-            &mut audio,
+            |start_ms| audio::AudioStream::open_at(&video_path, start_ms),
             load,
             &cancel,
             move |p| {

@@ -2,12 +2,16 @@
 //! parts (`chunks.rs`), each part sent to Whisper, finished parts cached, and the parts
 //! merged into one transcript with times on the video's clock.
 //!
+//! **Plan.** The first run reads the whole audio once to cut it into parts and measure its
+//! loudness (`plan.json`), so the number of parts is known; later runs seek straight to the
+//! first unfinished part.
+//!
 //! **Cache** (`<project>/transcript/`): `meta.json` records what the transcript is made
 //! from (settings, video size and time, part limits); any difference discards the folder.
 //! Each finished part is saved as `part-NNN.json` the moment it is done, so a cancelled
 //! (or crashed) run resumes after its last finished part. The finished transcript is
 //! `transcript.json`, with `loudness.json` (one level per second) next to it; the part
-//! files are removed then.
+//! files and the plan are removed then.
 //!
 //! **Continuity across parts.** The language is detected on the first part with sound and
 //! then fixed, so it can't change halfway. Each part's prompt is the custom words plus the
@@ -32,6 +36,7 @@ const CACHE_VERSION: u32 = 1;
 const META_FILE: &str = "meta.json";
 const TRANSCRIPT_FILE: &str = "transcript.json";
 const LOUDNESS_FILE: &str = "loudness.json";
+const PLAN_FILE: &str = "plan.json";
 
 /// How many words of the previous part go into the next part's prompt.
 const PROMPT_TAIL_WORDS: usize = 30;
@@ -107,6 +112,8 @@ struct Part {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage {
+    /// Reading the whole audio once to plan the parts (the first run only).
+    ReadingAudio,
     LoadingModel,
     Transcribing,
     Finishing,
@@ -118,7 +125,7 @@ pub struct Progress {
     /// How far through the video, 0–`duration_ms`.
     pub position_ms: u64,
     pub duration_ms: u64,
-    /// The part being worked on (1-based) and about how many there are.
+    /// The part being worked on (1-based) and how many there are (0 while reading).
     pub part: usize,
     pub parts: usize,
     /// Time left, once there is a measured speed.
@@ -195,14 +202,21 @@ pub fn cached(dir: &Path, settings: &Settings, video: &Video, limits: &Limits) -
     })
 }
 
-/// How many parts a cancelled run has finished (0 if none, or if the settings differ).
-pub fn finished_parts(dir: &Path, settings: &Settings, video: &Video, limits: &Limits) -> usize {
+/// How many parts a cancelled run has finished, and how many parts there are (once the
+/// audio has been planned). (0, None) if nothing is cached for these settings.
+pub fn finished_parts(
+    dir: &Path,
+    settings: &Settings,
+    video: &Video,
+    limits: &Limits,
+) -> (usize, Option<usize>) {
     if !cache_matches(dir, &Meta::new(settings, video, limits)) {
-        return 0;
+        return (0, None);
     }
-    (0..)
-        .take_while(|&i| read_json::<Part>(&part_file(dir, i)).is_some())
-        .count()
+    match read_json::<Plan>(&dir.join(PLAN_FILE)) {
+        Some(plan) => (finished(dir, &plan).len(), Some(plan.parts.len())),
+        None => (0, None),
+    }
 }
 
 /// Estimated time left: the remaining audio at the speed measured so far.
@@ -271,16 +285,93 @@ fn merge(parts: Vec<Part>, settings: &Settings) -> Transcript {
     Transcript { language, segments }
 }
 
-/// Transcribes the whole video into `dir`, resuming from finished parts. `load` is called
-/// only if some part still needs Whisper. Returns [`CANCELLED`] if `cancel` is set; the
-/// finished parts stay cached.
+/// Where each part starts and ends (in samples) and the loudness per second, worked out
+/// once by reading the whole audio ([`make_plan`]) and cached as `plan.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct Plan {
+    parts: Vec<(u64, u64)>,
+    loudness: Vec<f32>,
+}
+
+/// Reads the whole audio once: the cut plan (`chunks::next_cut`, so a video is always cut
+/// the same way) and the loudness. Reports how far it got in ms.
+fn make_plan(
+    audio: &mut impl AudioSource,
+    limits: &Limits,
+    cancel: &AtomicBool,
+    mut on_progress: impl FnMut(u64),
+) -> Result<Plan, String> {
+    let mut parts = Vec::new();
+    let mut loudness = Loudness::default();
+    let mut buffer: Vec<f32> = Vec::new();
+    let mut at_end = false;
+    let mut offset = 0u64; // samples before buffer[0]
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CANCELLED.into());
+        }
+        let Some(cut) = chunks::next_cut(&buffer, at_end, limits) else {
+            let before = buffer.len();
+            if audio.read(&mut buffer, limits.max_samples() + 1 - before)? == 0 {
+                at_end = true;
+            }
+            loudness.push(&buffer[before..]);
+            on_progress(samples_to_ms(offset as usize + buffer.len()));
+            continue;
+        };
+        if cut == 0 {
+            break;
+        }
+        parts.push((offset, offset + cut as u64));
+        buffer.drain(..cut);
+        offset += cut as u64;
+    }
+    Ok(Plan {
+        parts,
+        loudness: loudness.finish(),
+    })
+}
+
+/// Reads exactly `n` samples (fewer only if the audio ends).
+fn read_exact(audio: &mut impl AudioSource, n: usize) -> Result<Vec<f32>, String> {
+    let mut samples = Vec::with_capacity(n);
+    while samples.len() < n {
+        let want = n - samples.len();
+        if audio.read(&mut samples, want)? == 0 {
+            break;
+        }
+    }
+    Ok(samples)
+}
+
+fn part_ms(&(start, end): &(u64, u64)) -> (u64, u64) {
+    (samples_to_ms(start as usize), samples_to_ms(end as usize))
+}
+
+/// The finished parts at the start of the plan (a part file whose bounds don't match the
+/// plan doesn't count).
+fn finished(dir: &Path, plan: &Plan) -> Vec<Part> {
+    plan.parts
+        .iter()
+        .enumerate()
+        .map_while(|(i, bounds)| {
+            let (start_ms, end_ms) = part_ms(bounds);
+            read_json::<Part>(&part_file(dir, i))
+                .filter(|p| p.start_ms == start_ms && p.end_ms == end_ms)
+        })
+        .collect()
+}
+
+/// Transcribes the whole video into `dir`, resuming from finished parts. `open_audio`
+/// starts the audio at a time in ms; `load` is called only if some part still needs
+/// Whisper. Returns [`CANCELLED`] if `cancel` is set; finished work stays cached.
 #[allow(clippy::too_many_arguments)]
-pub fn run<T: Transcriber>(
+pub fn run<T: Transcriber, A: AudioSource>(
     dir: &Path,
     settings: &Settings,
     video: &Video,
     limits: &Limits,
-    audio: &mut impl AudioSource,
+    mut open_audio: impl FnMut(u64) -> Result<A, String>,
     load: impl FnOnce() -> Result<T, String>,
     cancel: &Arc<AtomicBool>,
     on_progress: impl Fn(Progress) + Send + Sync + 'static,
@@ -292,140 +383,137 @@ pub fn run<T: Transcriber>(
         write_json(&dir.join(META_FILE), &meta)?;
     }
     let on_progress = Arc::new(on_progress);
-    let parts_estimate = video.duration_ms.div_ceil(limits.target_ms).max(1) as usize;
+    let duration_ms = video.duration_ms;
+
+    let plan = match read_json::<Plan>(&dir.join(PLAN_FILE)) {
+        Some(plan) => plan,
+        None => {
+            let plan = make_plan(&mut open_audio(0)?, limits, cancel, |position_ms| {
+                on_progress(Progress {
+                    stage: Stage::ReadingAudio,
+                    position_ms: position_ms.min(duration_ms),
+                    duration_ms,
+                    part: 0,
+                    parts: 0,
+                    eta_ms: None,
+                })
+            })?;
+            write_json(&dir.join(PLAN_FILE), &plan)?;
+            plan
+        }
+    };
+    let total = plan.parts.len();
     let custom = transcribe::prompt_from_custom_words(&settings.custom_words);
 
+    let mut parts = finished(dir, &plan);
+    let mut language = settings.language.clone();
+    if language.is_none() {
+        language = parts.iter().find_map(|p| p.language.clone());
+    }
     let mut engine: Option<T> = None;
     let mut load = Some(load);
-    let mut language = settings.language.clone();
-    let mut parts: Vec<Part> = Vec::new();
-    let mut loudness = Loudness::default();
-    let mut buffer: Vec<f32> = Vec::new();
-    let mut at_end = false;
-    let mut offset = 0usize; // samples before buffer[0]
     // Measured speed, over the parts Whisper actually worked on.
     let mut spent_ms = 0u64;
     let mut worked_audio_ms = 0u64;
 
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(CANCELLED.into());
-        }
-        let Some(cut) = chunks::next_cut(&buffer, at_end, limits) else {
-            let before = buffer.len();
-            let want = limits.max_samples() + 1 - before;
-            if audio.read(&mut buffer, want)? == 0 {
-                at_end = true;
+    if parts.len() < total {
+        let (first_ms, _) = part_ms(&plan.parts[parts.len()]);
+        let mut audio = open_audio(first_ms)?;
+        for index in parts.len()..total {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(CANCELLED.into());
             }
-            loudness.push(&buffer[before..]);
-            continue;
-        };
-        if cut == 0 {
-            break;
-        }
-
-        let index = parts.len();
-        let start_ms = samples_to_ms(offset);
-        let end_ms = samples_to_ms(offset + cut);
-        let file = part_file(dir, index);
-        let part = match read_json::<Part>(&file) {
-            Some(p) if p.start_ms == start_ms && p.end_ms == end_ms => p,
-            _ => {
-                let samples = &buffer[..cut];
-                let mut part = Part {
-                    start_ms,
-                    end_ms,
-                    language: None,
-                    segments: Vec::new(),
-                };
-                if chunks::has_sound(samples) {
-                    if engine.is_none() {
-                        on_progress(Progress {
-                            stage: Stage::LoadingModel,
-                            position_ms: start_ms,
-                            duration_ms: video.duration_ms,
-                            part: index + 1,
-                            parts: parts_estimate.max(index + 1),
-                            eta_ms: None,
-                        });
-                        engine = Some((load.take().expect("loaded once"))()?);
-                    }
-                    let prompt = part_prompt(
-                        custom.as_deref(),
-                        parts.last().map_or(&[][..], |p| p.segments.as_slice()),
-                    );
-                    let options = Options {
-                        language: language.as_deref(),
-                        hide_non_speech: settings.hide_non_speech,
-                        prompt: prompt.as_deref(),
-                    };
-
-                    let started = Instant::now();
-                    let report = {
-                        let on_progress = on_progress.clone();
-                        let (duration_ms, part_no) = (video.duration_ms, index + 1);
-                        let parts = parts_estimate.max(index + 1);
-                        let (spent_before, worked_before) = (spent_ms, worked_audio_ms);
-                        let len_ms = end_ms - start_ms;
-                        move |percent: i32| {
-                            let done_ms = len_ms * percent.clamp(0, 100) as u64 / 100;
-                            let position_ms = (start_ms + done_ms).min(duration_ms);
-                            on_progress(Progress {
-                                stage: Stage::Transcribing,
-                                position_ms,
-                                duration_ms,
-                                part: part_no,
-                                parts,
-                                eta_ms: eta_ms(
-                                    duration_ms.saturating_sub(position_ms),
-                                    spent_before + started.elapsed().as_millis() as u64,
-                                    worked_before + done_ms,
-                                ),
-                            });
-                        }
-                    };
-                    report(0);
-                    let t = engine.as_ref().unwrap().transcribe(
-                        samples,
-                        options,
-                        cancel,
-                        Box::new(report),
-                    )?;
-                    spent_ms += started.elapsed().as_millis() as u64;
-                    worked_audio_ms += end_ms - start_ms;
-                    part.language = Some(t.language);
-                    part.segments = place(t.segments, start_ms, end_ms);
+            let (start, end) = plan.parts[index];
+            let (start_ms, end_ms) = part_ms(&plan.parts[index]);
+            let samples = read_exact(&mut audio, (end - start) as usize)?;
+            let mut part = Part {
+                start_ms,
+                end_ms,
+                language: None,
+                segments: Vec::new(),
+            };
+            if chunks::has_sound(&samples) {
+                if engine.is_none() {
+                    on_progress(Progress {
+                        stage: Stage::LoadingModel,
+                        position_ms: start_ms,
+                        duration_ms,
+                        part: index + 1,
+                        parts: total,
+                        eta_ms: None,
+                    });
+                    engine = Some((load.take().expect("loaded once"))()?);
                 }
-                write_json(&file, &part)?;
-                part
+                let prompt = part_prompt(
+                    custom.as_deref(),
+                    parts.last().map_or(&[][..], |p| p.segments.as_slice()),
+                );
+                let options = Options {
+                    language: language.as_deref(),
+                    hide_non_speech: settings.hide_non_speech,
+                    prompt: prompt.as_deref(),
+                };
+
+                let started = Instant::now();
+                let report = {
+                    let on_progress = on_progress.clone();
+                    let (spent_before, worked_before) = (spent_ms, worked_audio_ms);
+                    let len_ms = end_ms - start_ms;
+                    move |percent: i32| {
+                        let done_ms = len_ms * percent.clamp(0, 100) as u64 / 100;
+                        let position_ms = (start_ms + done_ms).min(duration_ms);
+                        on_progress(Progress {
+                            stage: Stage::Transcribing,
+                            position_ms,
+                            duration_ms,
+                            part: index + 1,
+                            parts: total,
+                            eta_ms: eta_ms(
+                                duration_ms.saturating_sub(position_ms),
+                                spent_before + started.elapsed().as_millis() as u64,
+                                worked_before + done_ms,
+                            ),
+                        });
+                    }
+                };
+                report(0);
+                let t = engine.as_ref().unwrap().transcribe(
+                    &samples,
+                    options,
+                    cancel,
+                    Box::new(report),
+                )?;
+                spent_ms += started.elapsed().as_millis() as u64;
+                worked_audio_ms += end_ms - start_ms;
+                part.language = Some(t.language);
+                part.segments = place(t.segments, start_ms, end_ms);
             }
-        };
-        if language.is_none() {
-            language = part.language.clone();
+            write_json(&part_file(dir, index), &part)?;
+            if language.is_none() {
+                language = part.language.clone();
+            }
+            parts.push(part);
         }
-        parts.push(part);
-        buffer.drain(..cut);
-        offset += cut;
     }
 
     on_progress(Progress {
         stage: Stage::Finishing,
-        position_ms: video.duration_ms,
-        duration_ms: video.duration_ms,
-        part: parts.len().max(1),
-        parts: parts.len().max(1),
+        position_ms: duration_ms,
+        duration_ms,
+        part: total.max(1),
+        parts: total.max(1),
         eta_ms: Some(0),
     });
-    let part_count = parts.len();
     let output = Output {
         transcript: merge(parts, settings),
-        loudness: loudness.finish(),
+        loudness: plan.loudness,
     };
     write_json(&dir.join(LOUDNESS_FILE), &output.loudness)?;
     write_json(&dir.join(TRANSCRIPT_FILE), &output.transcript)?;
-    for i in 0..part_count {
+    for i in 0..total {
         let _ = fs::remove_file(part_file(dir, i));
     }
+    let _ = fs::remove_file(dir.join(PLAN_FILE));
     Ok(output)
 }
 
@@ -473,6 +561,19 @@ mod tests {
             parts.push((200, 0.0));
         }
         tone(&parts)
+    }
+
+    /// Opens `samples` at a time, like ffmpeg's seek, and remembers where it was opened.
+    fn opener(
+        samples: Vec<f32>,
+        opened: Arc<Mutex<Vec<u64>>>,
+    ) -> impl FnMut(u64) -> Result<FakeAudio, String> {
+        move |ms| {
+            opened.lock().unwrap().push(ms);
+            Ok(FakeAudio::new(
+                samples[ms_to_samples(ms).min(samples.len())..].to_vec(),
+            ))
+        }
     }
 
     /// Hands out its samples in uneven pieces.
@@ -589,7 +690,7 @@ mod tests {
             settings,
             video,
             &SMALL,
-            &mut FakeAudio::new(audio),
+            opener(audio, Arc::default()),
             || Ok(whisper),
             &cancel,
             move |p| log.lock().unwrap().push(p),
@@ -635,8 +736,14 @@ mod tests {
             .collect();
         assert!(files.is_empty(), "part files are removed: {files:?}");
 
-        // Progress: loading once, then parts 1..3 forward, then finishing.
-        assert_eq!(progress[0].stage, Stage::LoadingModel);
+        // Progress: reading the audio, loading once, parts 1..3 of exactly 3, finishing.
+        assert_eq!(progress[0].stage, Stage::ReadingAudio);
+        let transcribing: Vec<_> = progress
+            .iter()
+            .filter(|p| p.stage == Stage::Transcribing)
+            .collect();
+        assert!(transcribing.iter().all(|p| p.parts == 3));
+        assert_eq!(transcribing.last().unwrap().part, 3);
         assert_eq!(
             progress
                 .iter()
@@ -644,11 +751,15 @@ mod tests {
                 .count(),
             1
         );
-        assert!(
-            progress
-                .windows(2)
-                .all(|w| w[0].position_ms <= w[1].position_ms)
-        );
+        // Position moves forward within each stage (reading, then transcribing from 0).
+        for stage in [Stage::ReadingAudio, Stage::Transcribing] {
+            let positions: Vec<u64> = progress
+                .iter()
+                .filter(|p| p.stage == stage)
+                .map(|p| p.position_ms)
+                .collect();
+            assert!(positions.windows(2).all(|w| w[0] <= w[1]), "{stage:?}");
+        }
         let last = progress.last().unwrap();
         assert_eq!(
             (last.stage, last.position_ms, last.part, last.parts),
@@ -678,7 +789,10 @@ mod tests {
         };
         let (result, _) = go(&dir, &settings(), &VIDEO, speech(), &stopping);
         assert_eq!(result.unwrap_err(), CANCELLED);
-        assert_eq!(finished_parts(&dir, &settings(), &VIDEO, &SMALL), 1);
+        assert_eq!(
+            finished_parts(&dir, &settings(), &VIDEO, &SMALL),
+            (1, Some(3))
+        );
         assert_eq!(cached(&dir, &settings(), &VIDEO, &SMALL), None);
 
         // The fake numbers its parts by call, so count from 2 like an uninterrupted run.
@@ -688,13 +802,28 @@ mod tests {
             language: None,
             prompt: None,
         });
-        let (result, _) = go(&dir, &settings(), &VIDEO, speech(), &resumed);
+        let opened = Arc::new(Mutex::new(Vec::new()));
+        let stages = Arc::new(Mutex::new(Vec::new()));
+        let log = stages.clone();
+        let result = run(
+            &dir,
+            &settings(),
+            &VIDEO,
+            &SMALL,
+            opener(speech(), opened.clone()),
+            || Ok(&resumed),
+            &Arc::new(AtomicBool::new(false)),
+            move |p| log.lock().unwrap().push(p.stage),
+        );
         assert_eq!(
             resumed.calls.borrow().len(),
             3,
             "only parts 2 and 3 were transcribed"
         );
         assert_eq!(result.unwrap(), uninterrupted);
+        // The plan was cached: no second read of the audio, which starts at part 2 (4.5 s).
+        assert!(!stages.lock().unwrap().contains(&Stage::ReadingAudio));
+        assert_eq!(*opened.lock().unwrap(), [4_500]);
     }
 
     #[test]
@@ -705,18 +834,21 @@ mod tests {
             ..FakeWhisper::default()
         };
         let _ = go(&dir, &settings(), &VIDEO, speech(), &stopping);
-        assert_eq!(finished_parts(&dir, &settings(), &VIDEO, &SMALL), 1);
+        assert_eq!(
+            finished_parts(&dir, &settings(), &VIDEO, &SMALL),
+            (1, Some(3))
+        );
 
         let small = Settings {
             model: WhisperModel::Small,
             ..settings()
         };
-        assert_eq!(finished_parts(&dir, &small, &VIDEO, &SMALL), 0);
+        assert_eq!(finished_parts(&dir, &small, &VIDEO, &SMALL), (0, None));
         let moved = Video {
             mtime_ms: 43,
             ..VIDEO
         };
-        assert_eq!(finished_parts(&dir, &settings(), &moved, &SMALL), 0);
+        assert_eq!(finished_parts(&dir, &settings(), &moved, &SMALL), (0, None));
 
         let whisper = FakeWhisper::default();
         go(&dir, &small, &VIDEO, speech(), &whisper).0.unwrap();
@@ -824,7 +956,10 @@ mod tests {
             ..FakeWhisper::default()
         };
         let _ = go(&dir, &settings(), &VIDEO, speech(), &stopping);
-        assert_eq!(finished_parts(&dir, &settings(), &VIDEO, &SMALL), 2);
+        assert_eq!(
+            finished_parts(&dir, &settings(), &VIDEO, &SMALL),
+            (2, Some(3))
+        );
         // Parts 1–2 cached; part 3 still needs the model.
         let cancel = Arc::new(AtomicBool::new(false));
         let whisper = FakeWhisper::default();
@@ -834,7 +969,7 @@ mod tests {
             &settings(),
             &VIDEO,
             &SMALL,
-            &mut FakeAudio::new(speech()),
+            opener(speech(), Arc::default()),
             || {
                 loads += 1;
                 Ok(&whisper)
@@ -851,7 +986,7 @@ mod tests {
             &settings(),
             &VIDEO,
             &SMALL,
-            &mut FakeAudio::new(silent),
+            opener(silent, Arc::default()),
             never_loaded,
             &cancel,
             |_| {},
@@ -872,7 +1007,7 @@ mod tests {
             &settings(),
             &VIDEO,
             &SMALL,
-            &mut FakeAudio::new(speech()),
+            opener(speech(), Arc::default()),
             || Ok(&whisper),
             &cancel,
             |_| {},
@@ -901,7 +1036,7 @@ mod tests {
             mtime_ms: 1,
             duration_ms: crate::probe::probe_video(&path).unwrap().duration_ms,
         };
-        let audio = || AudioStream::open(&path).unwrap();
+        let audio = |ms| AudioStream::open_at(&path, ms);
         let text = |t: &Transcript| {
             t.segments
                 .iter()
@@ -920,7 +1055,7 @@ mod tests {
             &settings(),
             &video,
             &LIMITS,
-            &mut audio(),
+            audio,
             || Ok(base_engine()),
             &cancel,
             move |p| {
@@ -931,7 +1066,7 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, CANCELLED);
-        assert_eq!(finished_parts(&dir, &settings(), &video, &LIMITS), 1);
+        assert_eq!(finished_parts(&dir, &settings(), &video, &LIMITS).0, 1);
         println!("part 1 and the cancel took {:.0?}", started.elapsed());
 
         // Resumed.
@@ -944,7 +1079,7 @@ mod tests {
             &settings(),
             &video,
             &LIMITS,
-            &mut audio(),
+            audio,
             || Ok(base_engine()),
             &cancel,
             move |p| progress.lock().unwrap().push(p),
@@ -985,19 +1120,26 @@ mod tests {
                 <= 1
         );
 
-        // An uninterrupted run gives the same text.
+        // An uninterrupted run says the same words. (Not the identical text: the resume
+        // seeks with ffmpeg, so its samples differ in the last bits, and Whisper's casing
+        // and punctuation are sensitive to that.)
         let whole = run(
             &temp_dir("long-whole"),
             &settings(),
             &video,
             &LIMITS,
-            &mut audio(),
+            audio,
             || Ok(base_engine()),
             &cancel,
             |_| {},
         )
         .unwrap();
-        assert_eq!(text(&whole.transcript), text(t));
+        let between = crate::wer::word_error_rate(&text(&whole.transcript), &text(t));
+        println!("resumed vs uninterrupted: WER {between:.3}");
+        assert!(
+            between < 0.05,
+            "resumed and uninterrupted differ: WER {between:.3}"
+        );
     }
 
     #[test]

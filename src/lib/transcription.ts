@@ -22,9 +22,10 @@ export interface ModelProgress {
 
 /** src-tauri/src/transcription.rs `Progress` (`transcription-progress` events). */
 export interface Progress {
-  stage: "loading-model" | "transcribing" | "finishing";
+  stage: "reading-audio" | "loading-model" | "transcribing" | "finishing";
   position_ms: number;
   duration_ms: number;
+  /** The part being worked on (1-based) and how many there are (0 while reading). */
   part: number;
   parts: number;
   eta_ms: number | null;
@@ -158,6 +159,8 @@ export function describeProgress(p: Progress): ProgressView {
   const percent = p.duration_ms > 0 ? Math.min(100, Math.floor((p.position_ms / p.duration_ms) * 100)) : null;
   const where = `${formatDuration(p.position_ms)} of ${formatDuration(p.duration_ms)}`;
   switch (p.stage) {
+    case "reading-audio":
+      return { label: "Reading the audio…", detail: `${where} · once, to plan the parts`, percent };
     case "loading-model":
       return { label: "Loading the model…", detail: null, percent };
     case "transcribing": {

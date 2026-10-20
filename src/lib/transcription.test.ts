@@ -50,6 +50,13 @@ describe("describeProgress", () => {
     expect(view.label).toBe("Transcribing");
     expect(view.percent).toBe(50);
   });
+  it("shows the first read of the audio", () => {
+    expect(describeProgress(progress({ stage: "reading-audio", position_ms: 725_000, part: 0, parts: 0 }))).toEqual({
+      label: "Reading the audio…",
+      detail: "12:05 of 1:02:03 · once, to plan the parts",
+      percent: 19,
+    });
+  });
   it("covers loading and finishing", () => {
     expect(describeProgress(progress({ stage: "loading-model" })).label).toBe("Loading the model…");
     expect(describeProgress(progress({ stage: "finishing" }))).toEqual({ label: "Finishing…", detail: null, percent: 100 });

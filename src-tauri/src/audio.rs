@@ -35,10 +35,24 @@ pub struct AudioStream {
 }
 
 impl AudioStream {
+    #[cfg(test)]
     pub fn open(video: &Path) -> Result<Self, String> {
+        Self::open_at(video, 0)
+    }
+
+    /// Starts `start_ms` into the audio (ffmpeg seeks, then trims to the exact time).
+    pub fn open_at(video: &Path, start_ms: u64) -> Result<Self, String> {
         let ffmpeg = ffmpeg::locate("ffmpeg")?;
-        let mut child = Command::new(&ffmpeg)
-            .args(["-nostdin", "-v", "error", "-i"])
+        let mut command = Command::new(&ffmpeg);
+        command.args(["-nostdin", "-v", "error"]);
+        if start_ms > 0 {
+            command.args([
+                "-ss",
+                &format!("{}.{:03}", start_ms / 1000, start_ms % 1000),
+            ]);
+        }
+        let mut child = command
+            .arg("-i")
             .arg(video)
             .args(["-vn", "-ac", "1", "-ar", &SAMPLE_RATE.to_string()])
             .args(["-f", "f32le", "-acodec", "pcm_f32le", "pipe:1"])
@@ -244,6 +258,28 @@ pub(crate) mod tests {
             samples.iter().any(|s| s.abs() > 0.05),
             "audio is not silent"
         );
+    }
+
+    /// Needs FFmpeg.
+    #[test]
+    #[ignore]
+    fn starts_at_a_time() {
+        let all = read_all(&fixture("hello.mp4"));
+        let mut stream = AudioStream::open_at(&fixture("hello.mp4"), 2_500).unwrap();
+        let mut late = Vec::new();
+        while stream.read(&mut late, 1 << 20).unwrap() > 0 {}
+        let skipped = all.len() - late.len();
+        assert!(
+            skipped.abs_diff(ms_to_samples(2_500)) <= ms_to_samples(5),
+            "{skipped}"
+        );
+        // The same samples, give or take a few at the start.
+        let diff: f32 = late[1000..2000]
+            .iter()
+            .zip(&all[skipped + 1000..skipped + 2000])
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(diff < 1.0, "{diff}");
     }
 
     #[test]
