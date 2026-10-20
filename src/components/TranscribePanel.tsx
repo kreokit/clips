@@ -17,6 +17,7 @@ import {
   modelHint,
   normalized,
   prepareModel,
+  savedNote,
   startLabel,
   transcribe,
   transcriptStatus,
@@ -42,6 +43,8 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
   const [status, setStatus] = useState<TranscriptStatus | null>(null);
   const [run, setRun] = useState<Run>({ kind: "idle" });
   const [editing, setEditing] = useState(false);
+  // The last run was cancelled (for "Nothing saved yet").
+  const [cancelled, setCancelled] = useState(false);
   // Progress events can arrive after a run has ended; only the active run may update.
   const runId = useRef(0);
   const active = useRef(false);
@@ -91,6 +94,7 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
     };
     const sent = normalized(settings);
     active.current = true;
+    setCancelled(false);
     try {
       show({ kind: "running", view: { label: "Starting…", detail: null, percent: null } });
       if (selected?.source !== "ours") {
@@ -99,18 +103,21 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
       }
       const transcript = await transcribe(project.id, sent, (p) => show({ kind: "running", view: describeProgress(p) }));
       if (runId.current === id) {
-        setStatus((s) => ({ transcript, finished_parts: 0, parts: s?.parts ?? 1 }));
+        setStatus((s) => ({ transcript, saved_until_ms: 0, parts: s?.parts ?? 1 }));
         setEditing(false);
         setRun({ kind: "idle" });
       }
     } catch (e) {
-      show(String(e) === CANCELLED ? { kind: "idle" } : { kind: "error", message: String(e) });
+      const wasCancelled = String(e) === CANCELLED;
+      if (wasCancelled && runId.current === id) setCancelled(true);
+      show(wasCancelled ? { kind: "idle" } : { kind: "error", message: String(e) });
     } finally {
       if (runId.current === id) active.current = false;
     }
   }
 
   const transcript = status?.transcript ?? null;
+  const note = savedNote(status, cancelled, project.video.duration_ms);
   if (transcript && !editing && !running) {
     return <TranscriptView transcript={transcript} model={settings.model} onChange={() => setEditing(true)} />;
   }
@@ -124,8 +131,8 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
           <span className="transcribe-label">{run.view.label}</span>
           {run.view.detail && <span className="transcribe-detail tabular">{run.view.detail}</span>}
           <p className="transcribe-note">
-            You can cancel at any time: finished parts are kept, and Transcribe resumes from there. The computer stays awake
-            meanwhile.
+            You can cancel at any time: the finished text is saved about every 30 seconds, and Transcribe resumes from there.
+            The computer stays awake meanwhile.
           </p>
           <div className="panel-actions">
             <Button variant="secondary" onClick={() => void cancelJob()}>
@@ -173,6 +180,7 @@ export function TranscribePanel({ project, onRunningChange }: { project: Project
             {formatDuration(project.video.duration_ms)} of video. Long videos take a while on a computer's processor; you'll
             see the time left once it has started.
           </p>
+          {note && <p className="transcribe-saved">{note}</p>}
           {run.kind === "error" && <p className="transcribe-error">{run.message}</p>}
           <div className="panel-actions">
             {transcript && (

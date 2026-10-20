@@ -9,6 +9,7 @@ import {
   languageValue,
   modelHint,
   normalized,
+  savedNote,
   startLabel,
   withLanguage,
   wordCount,
@@ -89,11 +90,28 @@ describe("modelHint", () => {
   });
 });
 
+const status = (saved_until_ms: number) => ({ transcript: null, saved_until_ms, parts: 13 });
+
 describe("startLabel", () => {
-  it("offers to resume a cancelled run", () => {
+  it("offers to resume from where the saved work ends", () => {
     expect(startLabel(null)).toBe("Transcribe");
-    expect(startLabel({ transcript: null, finished_parts: 0, parts: 13 })).toBe("Transcribe");
-    expect(startLabel({ transcript: null, finished_parts: 3, parts: 13 })).toBe("Resume (3 of 13 parts done)");
+    expect(startLabel(status(0))).toBe("Transcribe");
+    expect(startLabel(status(220_000))).toBe("Resume from 3:40");
+  });
+  it("starts over once a transcript is finished", () => {
+    expect(startLabel({ ...status(220_000), transcript: { language: "en", segments: [] } })).toBe("Transcribe");
+  });
+});
+
+describe("savedNote", () => {
+  it("says what is saved", () => {
+    expect(savedNote(status(220_000), true, 3_723_000)).toBe("Saved up to 3:40 of 1:02:03. Resume continues from there.");
+    expect(savedNote(status(220_000), false, 3_723_000)).toBe("Saved up to 3:40 of 1:02:03. Resume continues from there.");
+  });
+  it("says when nothing was saved, only after a cancel", () => {
+    expect(savedNote(status(0), true, 3_723_000)).toBe("Nothing saved yet: Transcribe starts from the beginning.");
+    expect(savedNote(status(0), false, 3_723_000)).toBeNull();
+    expect(savedNote(null, false, 3_723_000)).toBeNull();
   });
 });
 

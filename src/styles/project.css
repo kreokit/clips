@@ -126,6 +126,11 @@
   color: var(--color-text-3);
 }
 
+.transcribe-saved {
+  margin: 0;
+  color: var(--color-text-2);
+}
+
 .transcribe-error {
   margin: 0;
   color: var(--color-danger);

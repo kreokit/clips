@@ -91,7 +91,7 @@ export function ProjectView() {
             </>
           }
         >
-          <p>The parts finished so far are kept. Open this video again and choose Resume to carry on.</p>
+          <p>The text finished so far is kept. Open this video again and choose Resume to carry on.</p>
         </Dialog>
       )}
     </div>

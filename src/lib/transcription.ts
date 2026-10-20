@@ -54,7 +54,8 @@ export interface Transcript {
 /** src-tauri/src/lib.rs `TranscriptStatus`. */
 export interface TranscriptStatus {
   transcript: Transcript | null;
-  finished_parts: number;
+  /** Saved work (finished parts, then the checkpoint inside the next) reaches this far. */
+  saved_until_ms: number;
   parts: number;
 }
 
@@ -186,12 +187,19 @@ export function describeModelProgress(p: ModelProgress, model: WhisperModel): Pr
   };
 }
 
-/** The start button: a fresh start or a resume of a cancelled run. */
+const hasSaved = (s: TranscriptStatus | null): s is TranscriptStatus => !!s && !s.transcript && s.saved_until_ms > 0;
+
+/** The start button: a fresh start, or a resume from where a cancelled run's saved work ends. */
 export function startLabel(status: TranscriptStatus | null): string {
-  if (status && status.finished_parts > 0 && !status.transcript) {
-    return `Resume (${status.finished_parts} of ${status.parts} parts done)`;
+  return hasSaved(status) ? `Resume from ${formatDuration(status.saved_until_ms)}` : "Transcribe";
+}
+
+/** What's saved, shown after a Cancel (and whenever there is saved work to resume). */
+export function savedNote(status: TranscriptStatus | null, cancelled: boolean, duration_ms: number): string | null {
+  if (hasSaved(status)) {
+    return `Saved up to ${formatDuration(status.saved_until_ms)} of ${formatDuration(duration_ms)}. Resume continues from there.`;
   }
-  return "Transcribe";
+  return cancelled ? "Nothing saved yet: Transcribe starts from the beginning." : null;
 }
 
 /** Settings ↔ the language picker ("auto" stands for null). */
