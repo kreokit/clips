@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SpokenText } from "./clips";
-import { DEFAULT_FINDER } from "./clips";
+import { DEFAULT_FINDER, withPlatform } from "./clips";
 import {
   LEAD_MS,
   TAIL_MS,
@@ -19,6 +19,8 @@ import {
   snapTargets,
   wordIndexAt,
 } from "./clipEdit";
+
+const SHORTS = withPlatform(DEFAULT_FINDER, "shorts");
 
 /** Words of 400 ms with 100 ms gaps; sentences end after words 2, 5 and 8 (1 s pauses). */
 function text(): SpokenText {
@@ -123,9 +125,17 @@ describe("words and sentences around a clip", () => {
 
 describe("editor view", () => {
   it("warns outside the finder's range", () => {
-    expect(lengthNote(35_000, DEFAULT_FINDER)).toBeNull();
-    expect(lengthNote(12_000, DEFAULT_FINDER)).toBe("Shorter than 20 s");
-    expect(lengthNote(75_000, DEFAULT_FINDER)).toBe("Longer than 60 s");
+    expect(lengthNote(35_000, SHORTS)).toBeNull();
+    expect(lengthNote(12_000, SHORTS)).toBe("Shorter than 20 s");
+    expect(lengthNote(75_000, SHORTS)).toBe("Longer than 60 s");
+    // TikTok Rewards (the default): its own warning under 61 s, even at 60.9 s.
+    expect(lengthNote(70_000, DEFAULT_FINDER)).toBeNull();
+    expect(lengthNote(60_900, DEFAULT_FINDER)).toBe("Under 1 minute — not eligible for TikTok rewards");
+    expect(lengthNote(35_000, DEFAULT_FINDER)).toBe("Under 1 minute — not eligible for TikTok rewards");
+    expect(lengthNote(61_000, DEFAULT_FINDER)).toBeNull();
+    expect(lengthNote(95_000, DEFAULT_FINDER)).toBe("Longer than 90 s");
+    // Custom lengths under a minute don't get the TikTok warning.
+    expect(lengthNote(35_000, { ...SHORTS, platform: "custom" })).toBeNull();
   });
 
   it("frames the clip with room on both sides", () => {
@@ -141,7 +151,7 @@ describe("new clips", () => {
   const d = 20_000;
 
   it("start at the sentence at the playhead and grow by whole sentences towards the target", () => {
-    const finder = { ...DEFAULT_FINDER, target_ms: 3_000, max_ms: 10_000 };
+    const finder = { ...SHORTS, target_ms: 3_000, max_ms: 10_000 };
     const r = clipAround(t, t.words[4].start_ms, finder, d)!;
     expect(r.in_ms).toBe(inPointBefore(t.words, 3));
     expect(r.out_ms).toBe(outPointAfter(t.words, 8, d)); // one sentence is too short, two reach the target

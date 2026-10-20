@@ -86,6 +86,14 @@
   opacity: 0.45;
 }
 
+.clip-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font: var(--text-meta);
+  color: var(--color-warning);
+}
+
 .clip-thumb {
   position: relative;
 }
@@ -129,6 +137,12 @@
 .clip-length {
   bottom: var(--space-2);
   right: var(--space-2);
+}
+
+/* Under TikTok's 61 s. */
+.clip-length.short {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
 }
 
 .clip-body {
@@ -272,7 +286,7 @@
 /* Find moments */
 
 .finder-popover {
-  width: 320px;
+  width: 380px;
 }
 
 .finder {
@@ -286,6 +300,15 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+.finder-preset {
+  margin: 0;
+  color: var(--color-text-2);
+}
+
+.finder .ui-segmented {
+  width: 100%;
 }
 
 .finder-note {

@@ -3,6 +3,7 @@
  * and word edges, dragging the clip's edges, and what the editor shows around a clip.
  * Pure functions (tested in clipEdit.test.ts).
  */
+import { tiktokWarning } from "./clips";
 import type { Boundary, FinderSettings, SpokenText } from "./clips";
 import type { View } from "./timeline";
 
@@ -150,9 +151,11 @@ export function contextWords(text: SpokenText, clip: Range): [number, number] | 
   return [before ? before.first : inside[0], after ? after.last : inside[1]];
 }
 
-/** A warning when the clip is outside the finder's range, else null. */
+/** A warning when the clip is outside the finder's range (TikTok's own below 61 s), else null. */
 export function lengthNote(lengthMs: number, finder: FinderSettings): string | null {
   const s = (ms: number) => `${Math.round(ms / 1000)} s`;
+  const tiktok = tiktokWarning(lengthMs, finder);
+  if (tiktok) return tiktok;
   if (lengthMs < finder.min_ms) return `Shorter than ${s(finder.min_ms)}`;
   if (lengthMs > finder.max_ms) return `Longer than ${s(finder.max_ms)}`;
   return null;

@@ -186,7 +186,20 @@
 }
 
 .editor-warning {
+  margin-left: var(--space-2);
   color: var(--color-warning);
+}
+
+/* The TikTok Rewards warning: a clear, flat badge. */
+.editor-warning.tiktok {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 8px;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  vertical-align: middle;
 }
 
 .editor-spacer {

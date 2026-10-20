@@ -2,16 +2,57 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Project, TranscriptionSettings } from "./projects";
 import { normalized } from "./transcription";
 
+/** src-tauri/src/moments.rs `Platform`: what the clips are for, which sets their length. */
+export type Platform = "tiktok_rewards" | "shorts" | "custom";
+
 /** src-tauri/src/moments.rs `FinderSettings`: what the moment finder looks for. */
 export interface FinderSettings {
+  platform: Platform;
   min_ms: number;
   max_ms: number;
   target_ms: number;
-  /** How many clips to propose; null: about one per 2 minutes of video (5–30). */
+  /** How many clips to propose; null: automatic (see `autoCountLabel`), 5–30. */
   count: number | null;
 }
 
-export const DEFAULT_FINDER: FinderSettings = { min_ms: 20_000, max_ms: 60_000, target_ms: 35_000, count: null };
+/** The presets' lengths (as `Platform::preset` in Rust), and how they're described. */
+export const PLATFORMS: Record<Platform, { label: string; lengths: [number, number, number] | null; minutesPerClip: number }> = {
+  tiktok_rewards: { label: "TikTok Rewards", lengths: [61_000, 90_000, 70_000], minutesPerClip: 3 },
+  shorts: { label: "Shorts / Reels", lengths: [20_000, 60_000, 35_000], minutesPerClip: 2 },
+  custom: { label: "Custom", lengths: null, minutesPerClip: 2 },
+};
+
+/** TikTok's Creator Rewards pay only for videos over a minute; our clips are 61 s or more. */
+export const TIKTOK_MIN_MS = 61_000;
+export const TIKTOK_WARNING = "Under 1 minute — not eligible for TikTok rewards";
+
+/** The finder with `platform` chosen: a preset's lengths, or Custom keeping the current ones. */
+export function withPlatform(f: FinderSettings, platform: Platform): FinderSettings {
+  const lengths = PLATFORMS[platform].lengths;
+  if (!lengths) return { ...f, platform };
+  const [min_ms, max_ms, target_ms] = lengths;
+  return { ...f, platform, min_ms, max_ms, target_ms };
+}
+
+/** The default for new projects (until the user picks another): TikTok Rewards. */
+export const DEFAULT_FINDER: FinderSettings = withPlatform(
+  { platform: "custom", min_ms: 0, max_ms: 0, target_ms: 0, count: null },
+  "tiktok_rewards",
+);
+
+export const autoCountLabel = (p: Platform) => `About one per ${PLATFORMS[p].minutesPerClip} minutes`;
+
+/** "TikTok Rewards · 61–90 s". */
+export function finderSummary(f: FinderSettings): string {
+  return `${PLATFORMS[f.platform].label} · ${Math.round(f.min_ms / 1000)}–${Math.round(f.max_ms / 1000)} s`;
+}
+
+/** The TikTok warning for a clip of this length, if it applies. */
+export const tiktokWarning = (lengthMs: number, f: FinderSettings) =>
+  f.platform === "tiktok_rewards" && lengthMs < TIKTOK_MIN_MS ? TIKTOK_WARNING : null;
+
+/** Remembers the finder settings for new projects. */
+export const rememberFinder = (finder: FinderSettings) => invoke<void>("remember_finder", { finder });
 
 /** src-tauri/src/moments.rs `FeatureKind`. */
 export type FeatureKind = "hook" | "start" | "ending" | "energy" | "length";

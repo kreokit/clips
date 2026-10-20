@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Clip, DEFAULT_FINDER, Moment, applyScores, boardView, fixRange, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
+import { Clip, DEFAULT_FINDER, Moment, applyScores, autoCountLabel, boardView, finderSummary, fixRange, tiktokWarning, withPlatform, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
 
 const moment = (in_ms: number, out_ms: number, score = 50, reasons: [string, boolean][] = []): Moment => ({
   in_ms,
@@ -111,8 +111,31 @@ describe("applyScores", () => {
 
 describe("fixRange", () => {
   it("keeps shortest ≤ target ≤ longest, with 5 s between shortest and longest", () => {
-    expect(fixRange(DEFAULT_FINDER)).toEqual(DEFAULT_FINDER);
-    expect(fixRange({ ...DEFAULT_FINDER, min_ms: 60_000 })).toMatchObject({ min_ms: 60_000, max_ms: 65_000, target_ms: 60_000 });
-    expect(fixRange({ ...DEFAULT_FINDER, target_ms: 90_000 }).target_ms).toBe(60_000);
+    const shorts = withPlatform(DEFAULT_FINDER, "shorts");
+    expect(fixRange(shorts)).toEqual(shorts);
+    expect(fixRange({ ...shorts, min_ms: 60_000 })).toMatchObject({ min_ms: 60_000, max_ms: 65_000, target_ms: 60_000 });
+    expect(fixRange({ ...shorts, target_ms: 90_000 }).target_ms).toBe(60_000);
+  });
+});
+
+describe("platforms", () => {
+  it("defaults to TikTok Rewards, 61–90 s, about one clip per 3 minutes", () => {
+    expect(DEFAULT_FINDER).toEqual({ platform: "tiktok_rewards", min_ms: 61_000, max_ms: 90_000, target_ms: 70_000, count: null });
+    expect(finderSummary(DEFAULT_FINDER)).toBe("TikTok Rewards · 61–90 s");
+    expect(autoCountLabel("tiktok_rewards")).toBe("About one per 3 minutes");
+    expect(autoCountLabel("shorts")).toBe("About one per 2 minutes");
+  });
+
+  it("switches lengths with the preset; Custom keeps the current ones", () => {
+    const shorts = withPlatform({ ...DEFAULT_FINDER, count: 10 }, "shorts");
+    expect(shorts).toEqual({ platform: "shorts", min_ms: 20_000, max_ms: 60_000, target_ms: 35_000, count: 10 });
+    expect(withPlatform(shorts, "custom")).toEqual({ ...shorts, platform: "custom" });
+    expect(withPlatform(shorts, "tiktok_rewards")).toMatchObject({ min_ms: 61_000, max_ms: 90_000, target_ms: 70_000 });
+  });
+
+  it("warns about TikTok clips under 61 s only", () => {
+    expect(tiktokWarning(60_999, DEFAULT_FINDER)).toBe("Under 1 minute — not eligible for TikTok rewards");
+    expect(tiktokWarning(61_000, DEFAULT_FINDER)).toBeNull();
+    expect(tiktokWarning(30_000, withPlatform(DEFAULT_FINDER, "shorts"))).toBeNull();
   });
 });

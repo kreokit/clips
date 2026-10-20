@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Check, Film, Info, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Film, Info, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { clipAround } from "../lib/clipEdit";
 import {
   Clip,
@@ -19,6 +19,13 @@ import {
   firstLine,
   manualClip,
   fixRange,
+  PLATFORMS,
+  Platform,
+  autoCountLabel,
+  finderSummary,
+  rememberFinder,
+  tiktokWarning,
+  withPlatform,
   mergeFound,
   scoreClips,
   topReasons,
@@ -30,7 +37,7 @@ import { Project, formatDuration } from "../lib/projects";
 import { limiter } from "../lib/queue";
 import { normalized } from "../lib/transcription";
 import { useProject } from "../store/project";
-import { Button, Field, IconButton, NumberField, Popover, ProgressBar, Select, Tabs } from "../ui";
+import { Button, Field, IconButton, NumberField, Popover, ProgressBar, Segmented, Select, Tabs } from "../ui";
 import "../styles/clips.css";
 
 /** Two thumbnails at a time (each is an FFmpeg run). */
@@ -193,14 +200,17 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
             onClick={() => setSettingsOpen((o) => !o)}
             aria-expanded={settingsOpen}
           >
-            Find moments
+            {finderSummary(project.finder)}
           </Button>
         </div>
       </div>
       <Popover open={settingsOpen} onClose={() => setSettingsOpen(false)} anchor={settingsButton} align="end" className="finder-popover">
         <FinderPanel
           finder={project.finder}
-          onChange={(finder) => update({ finder })}
+          onChange={(finder) => {
+            update({ finder });
+            void rememberFinder(finder).catch(() => {});
+          }}
           finding={finding}
           onFind={() => {
             setSettingsOpen(false);
@@ -230,6 +240,7 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
             key={c.id}
             clip={c}
             projectId={project.id}
+            warning={tiktokWarning(clipLength(c), project.finder)}
             number={i + 1}
             selected={c.id === selected}
             why={why === c.id}
@@ -268,6 +279,7 @@ function emptyNote(filter: ClipFilter): string {
 function ClipCard({
   clip,
   projectId,
+  warning,
   number,
   selected,
   why,
@@ -279,6 +291,8 @@ function ClipCard({
 }: {
   clip: Clip;
   projectId: string;
+  /** The TikTok Rewards warning, for clips under 61 s. */
+  warning: string | null;
   number: number;
   selected: boolean;
   why: boolean;
@@ -317,7 +331,7 @@ function ClipCard({
             <Check size={14} strokeWidth={2.5} aria-hidden />
           </span>
         )}
-        <span className="clip-length tabular">{formatDuration(clipLength(clip))}</span>
+        <span className={["clip-length", "tabular", warning && "short"].filter(Boolean).join(" ")}>{formatDuration(clipLength(clip))}</span>
       </div>
       <div className="clip-body">
         <span className="clip-time tabular">
@@ -325,6 +339,12 @@ function ClipCard({
           {clip.source === "manual" && " · added by you"}
           {clip.edited && clip.source === "found" && " · edited"}
         </span>
+        {warning && (
+          <span className="clip-warning">
+            <AlertTriangle size={13} strokeWidth={2} aria-hidden />
+            {warning}
+          </span>
+        )}
         <p className="clip-text">{m ? firstLine(m.text, 120) : "No words in this clip."}</p>
         <ul className="clip-reasons">
           {topReasons(m).map((r) => (
@@ -425,7 +445,7 @@ export function WhyThisClip({ moment }: { moment: Moment }) {
   );
 }
 
-/** The finder's settings and "Find again". */
+/** The platform preset (or custom lengths), how many clips, and "Find again". */
 function FinderPanel({
   finder,
   onChange,
@@ -439,40 +459,56 @@ function FinderPanel({
 }) {
   const s = (ms: number) => ms / 1000;
   const set = (patch: Partial<FinderSettings>) => onChange(fixRange({ ...finder, ...patch }));
+  const custom = finder.platform === "custom";
   return (
     <div className="finder">
-      <div className="finder-lengths">
-        <NumberField
-          label="Shortest"
-          value={s(finder.min_ms)}
-          min={5}
-          max={170}
-          step={5}
-          decimals={0}
-          unit="s"
-          onChange={(v) => set({ min_ms: v * 1000 })}
+      <Field label="Platform">
+        <Segmented
+          label="Platform"
+          value={finder.platform}
+          onChange={(p) => onChange(withPlatform(finder, p))}
+          options={(Object.keys(PLATFORMS) as Platform[]).map((p) => ({ value: p, label: PLATFORMS[p].label }))}
         />
-        <NumberField
-          label="Target"
-          value={s(finder.target_ms)}
-          min={5}
-          max={180}
-          step={5}
-          decimals={0}
-          unit="s"
-          onChange={(v) => set({ target_ms: v * 1000 })}
-        />
-        <NumberField
-          label="Longest"
-          value={s(finder.max_ms)}
-          min={10}
-          max={180}
-          step={5}
-          decimals={0}
-          unit="s"
-          onChange={(v) => set({ max_ms: v * 1000 })}
-        />
-      </div>
+      </Field>
+      {custom ? (
+        <div className="finder-lengths">
+          <NumberField
+            label="Shortest"
+            value={s(finder.min_ms)}
+            min={5}
+            max={170}
+            step={5}
+            decimals={0}
+            unit="s"
+            onChange={(v) => set({ min_ms: v * 1000 })}
+          />
+          <NumberField
+            label="Target"
+            value={s(finder.target_ms)}
+            min={5}
+            max={180}
+            step={5}
+            decimals={0}
+            unit="s"
+            onChange={(v) => set({ target_ms: v * 1000 })}
+          />
+          <NumberField
+            label="Longest"
+            value={s(finder.max_ms)}
+            min={10}
+            max={180}
+            step={5}
+            decimals={0}
+            unit="s"
+            onChange={(v) => set({ max_ms: v * 1000 })}
+          />
+        </div>
+      ) : (
+        <p className="finder-preset tabular">
+          {s(finder.min_ms)}–{s(finder.max_ms)} s, aiming for about {s(finder.target_ms)} s.
+          {finder.platform === "tiktok_rewards" && " TikTok's Creator Rewards pay only for videos over 1 minute."}
+        </p>
+      )}
       <Field label="How many">
         <Select
           label="How many"
@@ -480,11 +516,13 @@ function FinderPanel({
           onChange={(v) => set({ count: v === "auto" ? null : Number(v) })}
           options={COUNTS.map((c) => ({
             value: c,
-            label: c === "auto" ? "About one per 2 minutes" : `${c} clips`,
+            label: c === "auto" ? autoCountLabel(finder.platform) : `${c} clips`,
           }))}
         />
       </Field>
-      <p className="finder-note">Find again replaces the proposals you haven't touched. Kept, discarded and edited clips stay.</p>
+      <p className="finder-note">
+        Clips are always whole sentences. Find again replaces the proposals you haven't touched; kept, discarded and edited clips stay.
+      </p>
       <div className="panel-actions">
         <Button variant="primary" onClick={onFind} disabled={finding}>
           Find again

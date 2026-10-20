@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   ChevronLeft,
@@ -33,7 +34,7 @@ import {
   snapTargets,
   wordIndexAt,
 } from "../lib/clipEdit";
-import { Clip, SpokenText, applyScores, manualClip, scoreClips, spokenText } from "../lib/clips";
+import { Clip, SpokenText, applyScores, manualClip, scoreClips, spokenText, tiktokWarning } from "../lib/clips";
 import { Project, formatDuration } from "../lib/projects";
 import { SNAP_PX, View, clampView, follow, msAt, tickLabel, tickStep, xAt, zoomAt } from "../lib/timeline";
 import { normalized } from "../lib/transcription";
@@ -270,6 +271,7 @@ export function ClipEditor({
   if (!clip || !shown) return null;
   const length = shown.out_ms - shown.in_ms;
   const note = lengthNote(length, project.finder);
+  const tiktok = tiktokWarning(length, project.finder) !== null;
   const m = clip.moment;
 
   return (
@@ -301,7 +303,12 @@ export function ClipEditor({
         </div>
         <span className="editor-length tabular">
           {formatDuration(shown.in_ms)}–{formatDuration(shown.out_ms)} · {formatDuration(length)}
-          {note && <span className="editor-warning"> · {note}</span>}
+          {note && (
+            <span className={["editor-warning", tiktok && "tiktok"].filter(Boolean).join(" ")} role={tiktok ? "alert" : undefined}>
+              {tiktok && <AlertTriangle size={14} strokeWidth={2} aria-hidden />}
+              {note}
+            </span>
+          )}
         </span>
         <span className="editor-spacer" />
         <Button variant="ghost" size="sm" icon={Plus} onClick={newClipHere} disabled={!text} title="A new clip at the playhead (N)">
