@@ -24,7 +24,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/projects/*/thumbnail.jpg"
+          "$APPDATA/projects/*/thumbnail.jpg",
+          "$APPDATA/projects/*/thumbs/*.jpg"
         ]
       }
     }

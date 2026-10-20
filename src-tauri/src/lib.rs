@@ -13,6 +13,7 @@ mod sentences;
 mod transcribe;
 mod transcription;
 mod vad;
+mod waveform;
 // Accuracy checks; tests only until the release self-test (milestone 6) uses it.
 #[cfg(test)]
 mod wer;
@@ -270,6 +271,34 @@ async fn transcribe(
     result
 }
 
+/// Path of a clip's thumbnail, the frame `ms` into the video (made on first request).
+#[tauri::command]
+async fn clip_thumbnail(app: AppHandle, id: String, ms: u64) -> Result<String, String> {
+    let root = projects_root(&app)?;
+    blocking(move || {
+        projects::clip_thumbnail(&root, &id, ms).map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+}
+
+/// The timeline waveform from `from_ms` to `to_ms`: one byte per 10 ms (waveform.rs),
+/// sent as raw bytes.
+#[tauri::command]
+async fn waveform_range(
+    app: AppHandle,
+    id: String,
+    from_ms: u64,
+    to_ms: u64,
+) -> Result<tauri::ipc::Response, String> {
+    let root = projects_root(&app)?;
+    let peaks = blocking(move || {
+        let project = projects::load(&root, &id)?;
+        waveform::range(std::path::Path::new(&project.video_path), from_ms, to_ms)
+    })
+    .await?;
+    Ok(tauri::ipc::Response::new(peaks))
+}
+
 /// The project's finished transcript for these settings, and its loudness.
 fn finished(
     app: &AppHandle,
@@ -400,6 +429,8 @@ pub fn run() {
             locate_video,
             remove_project,
             project_thumbnail,
+            clip_thumbnail,
+            waveform_range,
             list_models,
             prepare_model,
             cancel,

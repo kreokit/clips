@@ -334,7 +334,33 @@ pub fn thumbnail(root: &Path, id: &str) -> Result<PathBuf, String> {
     if out.is_file() {
         return Ok(out);
     }
-    let video = Path::new(&project.video_path);
+    grab_frame(Path::new(&project.video_path), &[1_000, 0], &out)
+}
+
+/// Folder of the clip thumbnails, `<project>/thumbs/<ms>.jpg`.
+const CLIP_THUMBS_DIR: &str = "thumbs";
+
+/// A clip's thumbnail: the frame `ms` into the video (rounded to 0.1 s, so nearby in
+/// points share one), made on first request.
+pub fn clip_thumbnail(root: &Path, id: &str, ms: u64) -> Result<PathBuf, String> {
+    let project = load(root, id)?;
+    let ms = ms / 100 * 100;
+    let dir = project_dir(root, id)?.join(CLIP_THUMBS_DIR);
+    let out = dir.join(format!("{ms}.jpg"));
+    if out.is_file() {
+        return Ok(out);
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    grab_frame(
+        Path::new(&project.video_path),
+        &[ms, ms.saturating_sub(1_000)],
+        &out,
+    )
+}
+
+/// Writes one frame of `video`, 480 px wide, to `out`: the first of the `seeks` (ms) that
+/// gives a frame (the last frames of a video can fail to decode).
+fn grab_frame(video: &Path, seeks: &[u64], out: &Path) -> Result<PathBuf, String> {
     if !video.is_file() {
         return Err("video not found".into());
     }
@@ -343,24 +369,26 @@ pub fn thumbnail(root: &Path, id: &str) -> Result<PathBuf, String> {
     // writes its own temporary file; whichever finishes first puts it in place.
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let tmp = out.with_file_name(format!(
-        "thumbnail-{}-{}.tmp.jpg",
+        "frame-{}-{}.tmp.jpg",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    for seek in ["1", "0"] {
+    for &seek in seeks {
         let ok = Command::new(&ffmpeg)
-            .args(["-nostdin", "-v", "error", "-y", "-ss", seek, "-i"])
+            .args(["-nostdin", "-v", "error", "-y", "-ss"])
+            .arg(format!("{}.{:03}", seek / 1000, seek % 1000))
+            .arg("-i")
             .arg(video)
             .args(["-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4"])
             .arg(&tmp)
             .status()
             .is_ok_and(|s| s.success());
         if ok && tmp.is_file() {
-            let renamed = fs::rename(&tmp, &out);
+            let renamed = fs::rename(&tmp, out);
             let _ = fs::remove_file(&tmp);
             return match renamed {
-                Ok(()) => Ok(out),
-                Err(_) if out.is_file() => Ok(out),
+                Ok(()) => Ok(out.to_path_buf()),
+                Err(_) if out.is_file() => Ok(out.to_path_buf()),
                 Err(e) => Err(e.to_string()),
             };
         }
@@ -636,5 +664,15 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
             .count();
         assert_eq!(leftovers, 0);
+
+        // Clip thumbnails, rounded to 0.1 s.
+        let clip = clip_thumbnail(&root, &id, 1_234).unwrap();
+        assert!(clip.ends_with("thumbs/1200.jpg"), "{}", clip.display());
+        assert!(fs::metadata(&clip).unwrap().len() > 0);
+        assert_eq!(clip_thumbnail(&root, &id, 1_299).unwrap(), clip);
+        assert!(
+            clip_thumbnail(&root, &id, 3_600_000).is_err(),
+            "past the end"
+        );
     }
 }
