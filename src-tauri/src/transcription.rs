@@ -1366,6 +1366,76 @@ mod tests {
             between < 0.05,
             "resumed and uninterrupted differ: WER {between:.3}"
         );
+
+        // The moment finder on both: whole-sentence clips (judged against the script, so
+        // a recognition slip in a clip's first or last word may count against it).
+        for (name, output) in [("resumed", &resumed), ("uninterrupted", &whole)] {
+            moments_follow_the_script(name, output, video.duration_ms);
+        }
+    }
+
+    /// Finds moments in a transcript of the long fixture and checks they start and end at
+    /// sentences of its script; prints how much of the transcript has punctuation.
+    fn moments_follow_the_script(name: &str, output: &Output, duration_ms: u64) {
+        use crate::sentences::{self, Boundary, normalize, tests::script_sentences};
+        let script: Vec<Vec<String>> = script_sentences()
+            .iter()
+            .map(|s| {
+                s.split_whitespace()
+                    .map(normalize)
+                    .filter(|w| !w.is_empty())
+                    .collect()
+            })
+            .collect();
+        let text = sentences::split(&output.transcript);
+        let by_punctuation = text
+            .sentences
+            .iter()
+            .filter(|s| s.ends == Boundary::Punctuation)
+            .count();
+        println!(
+            "{name}: {} sentences, {by_punctuation} ending at punctuation",
+            text.sentences.len()
+        );
+        let settings = crate::moments::FinderSettings::default();
+        let found = crate::moments::find_in(
+            &output.transcript,
+            &output.loudness,
+            duration_ms,
+            &settings,
+            &[],
+            0,
+        );
+        assert_eq!(found.len(), crate::moments::wanted(&settings, duration_ms));
+        let mut whole = 0;
+        for m in &found {
+            let words: Vec<String> = m
+                .text
+                .split_whitespace()
+                .map(normalize)
+                .filter(|w| !w.is_empty())
+                .collect();
+            let starts = script
+                .iter()
+                .any(|s| s.len() >= 2 && words.starts_with(&s[..2]));
+            let ends = script
+                .iter()
+                .any(|s| s.len() >= 2 && words.ends_with(&s[s.len() - 2..]));
+            println!(
+                "  {} {}–{} s: {}…{}",
+                m.score,
+                m.in_ms / 1000,
+                m.out_ms / 1000,
+                words[..4.min(words.len())].join(" "),
+                words[words.len().saturating_sub(4)..].join(" ")
+            );
+            whole += usize::from(starts && ends);
+        }
+        assert!(
+            whole + 1 >= found.len(),
+            "{name}: only {whole} of {} clips are whole script sentences",
+            found.len()
+        );
     }
 
     #[test]
