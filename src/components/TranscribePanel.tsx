@@ -219,7 +219,7 @@ function TranscriptView({ transcript, model, onChange }: { transcript: Transcrip
           {transcript.segments.map((s) => (
             <li key={s.id}>
               <span className="transcript-time tabular">{formatDuration(s.start_ms)}</span>
-              <span>{s.text}</span>
+              {s.text ? <span>{s.text}</span> : <span className="transcript-sound">{(s.sounds ?? []).map((t) => t.text).join(" ")}</span>}
             </li>
           ))}
         </ol>

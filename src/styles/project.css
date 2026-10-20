@@ -156,3 +156,7 @@
 .transcript-time {
   color: var(--color-text-3);
 }
+
+.transcript-sound {
+  color: var(--color-text-3);
+}

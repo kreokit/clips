@@ -44,6 +44,8 @@ export interface Segment {
   end_ms: number;
   text: string;
   words: Word[];
+  /** Sound tags ("[Laughter]"); a segment of only hidden tags has empty text. */
+  sounds?: Word[];
 }
 
 export interface Transcript {

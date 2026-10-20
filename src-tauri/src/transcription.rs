@@ -17,7 +17,8 @@
 //!
 //! **Continuity across parts.** The language is detected on the first part with sound and
 //! then fixed, so it can't change halfway. Each part's prompt is the custom words plus the
-//! end of the previous part's text, so sentences carry on across a cut.
+//! end of the previous part's text, so sentences carry on across a cut; an unpunctuated
+//! end is left out, so Whisper's lowercase mode doesn't spread to the next part.
 
 use std::fs;
 use std::path::Path;
@@ -258,13 +259,20 @@ fn eta_ms(remaining_audio_ms: u64, spent_ms: u64, done_audio_ms: u64) -> Option<
     Some((remaining_audio_ms as u128 * spent_ms as u128 / done_audio_ms as u128) as u64)
 }
 
-/// The prompt for the next part: custom words, then the end of the previous part's text.
+/// The prompt for the next part: custom words, then the end of the previous part's text,
+/// unless that text [looks unpunctuated](looks_unpunctuated): Whisper copies the prompt's
+/// style, so a lowercase run without full stops would carry over into the next part.
 fn part_prompt(custom: Option<&str>, previous: &[Segment]) -> Option<String> {
     let words: Vec<&str> = previous
         .iter()
         .flat_map(|s| s.text.split_whitespace())
         .collect();
-    let tail = words[words.len().saturating_sub(PROMPT_TAIL_WORDS)..].join(" ");
+    let tail = &words[words.len().saturating_sub(PROMPT_TAIL_WORDS)..];
+    let tail = if looks_unpunctuated(tail) {
+        String::new()
+    } else {
+        tail.join(" ")
+    };
     let prompt = [custom.unwrap_or(""), &tail]
         .iter()
         .filter(|s| !s.is_empty())
@@ -272,6 +280,26 @@ fn part_prompt(custom: Option<&str>, previous: &[Segment]) -> Option<String> {
         .collect::<Vec<_>>()
         .join(" ");
     (!prompt.is_empty()).then_some(prompt)
+}
+
+/// Fewer words than this are too few to judge the style of.
+const MIN_STYLE_WORDS: usize = 12;
+
+/// Whether these words read like Whisper's lowercase, unpunctuated mode: enough of them,
+/// and no sentence end (".", "?", "!") or no capital letter other than "I".
+fn looks_unpunctuated(words: &[&str]) -> bool {
+    let ends = |w: &&str| {
+        w.trim_end_matches(['"', '\'', ')', ']', '”', '’'])
+            .ends_with(['.', '?', '!', '…'])
+    };
+    let capital = |w: &&str| {
+        let bare = w.trim_start_matches(|c: char| !c.is_alphanumeric());
+        bare.chars().next().is_some_and(char::is_uppercase)
+            && bare != "I"
+            && !bare.starts_with("I'")
+            && !bare.starts_with("I’")
+    };
+    words.len() >= MIN_STYLE_WORDS && !(words.iter().any(ends) && words.iter().any(capital))
 }
 
 /// Moves a part's times onto the video's clock and keeps every time inside the part
@@ -283,7 +311,7 @@ fn place(segments: Vec<Segment>, start_ms: u64, end_ms: u64) -> Vec<Segment> {
         .map(|mut s| {
             s.start_ms = clamp(s.start_ms);
             s.end_ms = clamp(s.end_ms);
-            for w in &mut s.words {
+            for w in s.words.iter_mut().chain(&mut s.sounds) {
                 w.start_ms = clamp(w.start_ms);
                 w.end_ms = clamp(w.end_ms);
             }
@@ -721,6 +749,7 @@ mod tests {
                             end_ms: half,
                             text,
                         }],
+                        sounds: Vec::new(),
                     }],
                 });
                 cancel.store(true, Ordering::Relaxed);
@@ -749,6 +778,7 @@ mod tests {
                     end_ms: len_ms + 300,
                     text: format!("part{n} lasts {len_ms}"),
                     words,
+                    sounds: Vec::new(),
                 }],
             })
         }
@@ -1067,15 +1097,50 @@ mod tests {
             start_ms: 0,
             end_ms: 1,
             text: (1..=40)
-                .map(|i| format!("w{i}"))
+                .map(|i| format!("W{i}."))
                 .collect::<Vec<_>>()
                 .join(" "),
             words: Vec::new(),
+            sounds: Vec::new(),
         }];
         let tail = part_prompt(None, &previous).unwrap();
         assert_eq!(tail.split(' ').count(), PROMPT_TAIL_WORDS);
-        assert!(tail.starts_with("w11 ") && tail.ends_with(" w40"));
+        assert!(tail.starts_with("W11. ") && tail.ends_with(" W40."));
         assert_eq!(part_prompt(None, &[]), None);
+    }
+
+    #[test]
+    fn an_unpunctuated_tail_is_left_out_of_the_prompt() {
+        let previous = |text: &str| {
+            vec![Segment {
+                id: 0,
+                start_ms: 0,
+                end_ms: 1,
+                text: text.into(),
+                words: Vec::new(),
+                sounds: Vec::new(),
+            }]
+        };
+        let lowercase = "and then we went back to the studio and i said you know we \
+                         should try it again with the other microphone";
+        assert_eq!(part_prompt(None, &previous(lowercase)), None);
+        assert_eq!(
+            part_prompt(Some("KreoKit."), &previous(lowercase)).as_deref(),
+            Some("KreoKit."),
+            "custom words are still sent"
+        );
+        // Commas and capitals but no sentence end: still left out.
+        let no_ends = "And then we went back to the studio, and I said, you know, \
+                       we should try it again with the other microphone";
+        assert_eq!(part_prompt(None, &previous(no_ends)), None);
+        // Punctuated text is kept, and so is a short tail (too little to judge).
+        let fine = "And then we went back to the studio. I said we should try it \
+                    again with the other microphone. She agreed.";
+        assert_eq!(part_prompt(None, &previous(fine)).as_deref(), Some(fine));
+        assert_eq!(
+            part_prompt(None, &previous("thank you so much")).as_deref(),
+            Some("thank you so much")
+        );
     }
 
     #[test]

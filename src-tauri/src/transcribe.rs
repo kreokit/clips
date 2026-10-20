@@ -48,6 +48,12 @@ pub struct Segment {
     pub end_ms: u64,
     pub text: String,
     pub words: Vec<Word>,
+    /// Sound tags Whisper wrote in this segment ("[laughter]", "(applause)"), one per tag
+    /// with the times of its words. Recorded whether or not they're hidden from `words`;
+    /// a segment of only hidden tags has no words and empty text. The moment finder
+    /// reads them; transcripts made before they existed have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sounds: Vec<Word>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -213,9 +219,9 @@ fn to_segments(raw: Vec<RawSegment>, hide_non_speech: bool) -> Vec<Segment> {
             continue;
         }
         let mut words = align_words(group_tokens(&seg.tokens), &mut prev_end_ms);
+        let (kept, sounds) = strip_non_speech(words.clone());
         if hide_non_speech && !words.is_empty() {
-            let kept = strip_non_speech(words.clone());
-            if kept.is_empty() {
+            if kept.is_empty() && sounds.is_empty() {
                 continue;
             }
             if kept != words {
@@ -229,7 +235,10 @@ fn to_segments(raw: Vec<RawSegment>, hide_non_speech: bool) -> Vec<Segment> {
         }
         let (start_ms, end_ms) = match (words.first(), words.last()) {
             (Some(first), Some(last)) => (first.start_ms, last.end_ms),
-            _ => (centis_to_ms(seg.t0), centis_to_ms(seg.t1)),
+            _ => match (sounds.first(), sounds.last()) {
+                (Some(first), Some(last)) => (first.start_ms, last.end_ms),
+                _ => (centis_to_ms(seg.t0), centis_to_ms(seg.t1)),
+            },
         };
         segments.push(Segment {
             id: segments.len() as u32,
@@ -237,6 +246,7 @@ fn to_segments(raw: Vec<RawSegment>, hide_non_speech: bool) -> Vec<Segment> {
             end_ms,
             text,
             words,
+            sounds,
         });
     }
     segments
@@ -546,8 +556,10 @@ const MAX_TAG_WORDS: usize = 6;
 /// Removes the non-speech tags Whisper writes for sounds, e.g. "[MUSIC]", "[Musik]",
 /// "[BLANK_AUDIO]", "(applause)", "*laughs*", and bare "♪" symbols. Lyrics between ♪ marks
 /// are kept. An opening bracket without a nearby closing one is kept as ordinary text.
-fn strip_non_speech(words: Vec<Word>) -> Vec<Word> {
+/// Returns the kept words and the removed tags (one per tag, music notes not counted).
+fn strip_non_speech(words: Vec<Word>) -> (Vec<Word>, Vec<Word>) {
     let mut kept = Vec::with_capacity(words.len());
+    let mut sounds = Vec::new();
     let mut i = 0;
     while i < words.len() {
         let text = words[i].text.as_str();
@@ -571,6 +583,16 @@ fn strip_non_speech(words: Vec<Word>) -> Vec<Word> {
             };
             let end = (i..words.len().min(i + MAX_TAG_WORDS)).find(|&j| closes(&words[j], j == i));
             if let Some(end) = end {
+                let tag = &words[i..=end];
+                sounds.push(Word {
+                    start_ms: tag[0].start_ms,
+                    end_ms: tag[tag.len() - 1].end_ms,
+                    text: tag
+                        .iter()
+                        .map(|w| w.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                });
                 i = end + 1;
                 continue;
             }
@@ -586,7 +608,7 @@ fn strip_non_speech(words: Vec<Word>) -> Vec<Word> {
         }
         i += 1;
     }
-    kept
+    (kept, sounds)
 }
 
 #[cfg(test)]
@@ -808,37 +830,83 @@ pub(crate) mod tests {
             "♪",
             "[MUSIC].",
         ] {
-            assert_eq!(strip_non_speech(words(&[tag])), [], "{tag}");
+            assert_eq!(strip_non_speech(words(&[tag])).0, [], "{tag}");
         }
     }
 
     #[test]
     fn strips_multi_word_tags_and_keeps_speech_around_them() {
-        let kept = strip_non_speech(words(&[
+        let (kept, sounds) = strip_non_speech(words(&[
             "Hi", "[Music", "playing]", "there", "(laughs)", "friends.",
         ]));
         assert_eq!(texts(&kept), ["Hi", "there", "friends."]);
         // Timings of the kept words are untouched.
         assert_eq!(kept[1], word("there", 300, 390));
+        // The removed tags are reported, one per tag, with their words' times.
+        assert_eq!(
+            sounds,
+            [
+                word("[Music playing]", 100, 290),
+                word("(laughs)", 400, 490)
+            ]
+        );
     }
 
     #[test]
     fn keeps_lyrics_between_music_notes() {
-        let kept = strip_non_speech(words(&["♪", "Let", "it", "be", "♪"]));
+        let (kept, sounds) = strip_non_speech(words(&["♪", "Let", "it", "be", "♪"]));
         assert_eq!(texts(&kept), ["Let", "it", "be"]);
-        assert_eq!(texts(&strip_non_speech(words(&["♪Hello♪"]))), ["Hello"]);
+        assert_eq!(sounds, [], "music notes are not sound tags");
+        assert_eq!(texts(&strip_non_speech(words(&["♪Hello♪"])).0), ["Hello"]);
     }
 
     #[test]
     fn strips_tags_split_into_separate_bracket_words() {
-        let kept = strip_non_speech(words(&["[", "MUSIC", "]", "Hello", "("]));
+        let (kept, sounds) = strip_non_speech(words(&["[", "MUSIC", "]", "Hello", "("]));
         assert_eq!(texts(&kept), ["Hello"]);
+        assert_eq!(texts(&sounds), ["[ MUSIC ]"]);
+    }
+
+    #[test]
+    fn keeps_a_segment_of_only_sound_tags_without_words() {
+        let raw = |text: &str, tokens: Vec<RawToken>| RawSegment {
+            text: text.into(),
+            t0: 0,
+            t1: 300,
+            tokens,
+        };
+        let segments = || {
+            vec![
+                raw(
+                    "Ha, that's good.",
+                    vec![tok(b" That's", 0, 400), tok(b" good.", 400, 900)],
+                ),
+                raw(
+                    "[Laughter]",
+                    vec![tok(b" [", 1000, 1100), tok(b"Laughter]", 1100, 1800)],
+                ),
+            ]
+        };
+
+        let hidden = to_segments(segments(), true);
+        assert_eq!(hidden.len(), 2);
+        assert_eq!(hidden[1].text, "");
+        assert_eq!(hidden[1].words, []);
+        assert_eq!(hidden[1].sounds, [word("[Laughter]", 1000, 1800)]);
+        assert_eq!((hidden[1].start_ms, hidden[1].end_ms), (1000, 1800));
+        assert_eq!(hidden[1].id, 1);
+
+        // Shown tags stay in the words and are reported as sounds too.
+        let shown = to_segments(segments(), false);
+        assert_eq!(texts(&shown[1].words), ["[Laughter]"]);
+        assert_eq!(shown[1].sounds, hidden[1].sounds);
+        assert_eq!(shown[0].sounds, []);
     }
 
     #[test]
     fn keeps_unclosed_brackets_and_normal_words() {
         let input = words(&["Use", "(or", "skip", "it", "entirely", "if", "you", "want"]);
-        assert_eq!(strip_non_speech(input.clone()), input);
+        assert_eq!(strip_non_speech(input.clone()), (input, vec![]));
     }
 
     #[test]
