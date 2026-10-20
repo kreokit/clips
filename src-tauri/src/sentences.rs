@@ -1,8 +1,9 @@
 //! Sentences from a transcript's words, so clips never start or end mid-sentence.
 //!
 //! **Punctuation first.** A sentence ends at a word ending in ".", "?", "!" or "…" (a
-//! closing quote or bracket may follow). Titles ("Mr.", "Dr.") never end one; other
-//! abbreviations ("etc.", "U.S.") and an ellipsis only when the next word is capitalised.
+//! closing quote or bracket may follow). Titles ("Mr.", "Dr.") never end one; "?", "!",
+//! "…" and other abbreviations ("etc.", "U.S.") only when the next word is capitalised
+//! (Whisper bleeps a swear word as "f!", and capitalises after a real sentence end).
 //!
 //! **Pauses where punctuation is missing.** Whisper sometimes writes a whole part in
 //! lowercase without full stops, and some speakers run sentences together. Any stretch
@@ -59,13 +60,6 @@ pub enum Boundary {
     Pause,
     /// The best pause in an overlong sentence; may well be mid-thought.
     WeakPause,
-}
-
-impl Boundary {
-    /// Punctuation, the transcript's edges or a strong pause: safe to cut at.
-    pub fn is_clean(self) -> bool {
-        !matches!(self, Boundary::WeakPause)
-    }
 }
 
 /// A spoken word (sound tags left out).
@@ -136,11 +130,10 @@ const ABBREVIATIONS: &[&str] = &[
 /// Whether `word` ends a sentence by its punctuation, given the word after it.
 pub fn ends_sentence(word: &str, next: Option<&str>) -> bool {
     let bare = without_closers(word);
-    if bare.ends_with(['?', '!']) {
-        return true;
-    }
     let next_capital = next.is_none_or(capitalised);
-    if bare.ends_with('…') || bare.ends_with("...") {
+    // "?" and "!" before a lowercase word: a quoted question ("“why?” he asked") or a
+    // bleeped word ("gonna f! make"); an ellipsis there is a hesitation.
+    if bare.ends_with(['?', '!', '…']) || bare.ends_with("...") {
         return next_capital;
     }
     if !bare.ends_with('.') {
@@ -225,7 +218,8 @@ const STARTERS: &[&str] = &[
     "let's",
 ];
 
-/// Question words, and auxiliaries that open a question before a pronoun ("do you").
+/// Question words that open a question before an auxiliary ("how did", "what is"; "why"
+/// on its own), and auxiliaries that do before a pronoun ("do you"). "When I was…" isn't.
 const WH_WORDS: &[&str] = &["what", "why", "how", "who", "where", "when", "which"];
 const AUX: &[&str] = &[
     "do", "does", "did", "is", "are", "was", "were", "can", "could", "would", "should", "will",
@@ -354,8 +348,10 @@ fn opens_like_question(words: &[Token], first: usize, last: usize) -> bool {
         one
     };
     let skip = usize::from(one != words[first].norm);
-    WH_WORDS.contains(&one)
-        || (AUX.contains(&one) && w(first + 1 + skip).is_some_and(|p| PRONOUNS.contains(&p)))
+    let two = w(first + 1 + skip);
+    one == "why"
+        || (WH_WORDS.contains(&one) && two.is_some_and(|a| AUX.contains(&a)))
+        || (AUX.contains(&one) && two.is_some_and(|p| PRONOUNS.contains(&p)))
 }
 
 /// Splits the transcript into sentences (see the module docs).
@@ -389,8 +385,8 @@ pub fn split(transcript: &Transcript) -> Text {
         let long = words[end].end_ms - words[start].start_ms > FALLBACK_MS
             || end + 1 - start > FALLBACK_WORDS;
         if long {
-            for i in start..end {
-                ends[i] = pause_points(&words, i, scale)
+            for (i, end) in ends.iter_mut().enumerate().take(end).skip(start) {
+                *end = pause_points(&words, i, scale)
                     .is_some_and(|p| p >= STRONG_POINTS)
                     .then_some(Boundary::Pause);
             }
@@ -527,7 +523,10 @@ pub(crate) mod tests {
             ends_sentence("there.", Some("then")),
             "a full stop is enough"
         );
-        assert!(ends_sentence("why?", Some("because")));
+        assert!(ends_sentence("why?", Some("Because")));
+        assert!(!ends_sentence("why?", Some("he")), "a quoted question");
+        assert!(!ends_sentence("f!", Some("make")), "a bleeped word");
+        assert!(ends_sentence("why?", Some("I")));
         assert!(ends_sentence("wow!\"", None));
         assert!(ends_sentence("end.)", Some("Next")));
         assert!(!ends_sentence("Dr.", Some("Smith")));
@@ -582,7 +581,7 @@ pub(crate) mod tests {
     /// word and 60 ms elsewhere.
     fn lowercase_run(pause: u64) -> Transcript {
         let sentence = "people always ask me how the barn started years ago";
-        let text = vec![sentence; 7].join(" ");
+        let text = [sentence; 7].join(" ");
         transcript(&[&text], |i, _| if i % 10 == 9 { pause } else { 60 })
     }
 
@@ -597,7 +596,6 @@ pub(crate) mod tests {
         assert_eq!(text.sentences[0].ends, Boundary::Pause);
         assert_eq!(text.sentences[0].starts, Boundary::Edge);
         assert_eq!(text.sentences[1].starts, Boundary::Pause);
-        assert!(text.sentences[0].ends.is_clean());
     }
 
     #[test]
@@ -644,7 +642,6 @@ pub(crate) mod tests {
         assert_eq!(text.sentences.len(), 2, "{:?}", sentence_texts(&text));
         assert_eq!(text.sentences[0].last, 25);
         assert_eq!(text.sentences[0].ends, Boundary::WeakPause);
-        assert!(!text.sentences[0].ends.is_clean());
         assert_eq!(text.sentences[1].ends, Boundary::Edge);
     }
 
@@ -669,6 +666,11 @@ pub(crate) mod tests {
             !opens_like_question(&text.words, 2, 2),
             "\"you\" alone isn't one"
         );
+        let t = transcript(&["when i was young how did we live why not"], |_, _| 50);
+        let w = split(&t).words;
+        assert!(!opens_like_question(&w, 0, 9), "when i was");
+        assert!(opens_like_question(&w, 4, 9), "how did");
+        assert!(opens_like_question(&w, 8, 9), "why");
     }
 
     #[test]
@@ -865,11 +867,10 @@ pub(crate) mod tests {
         for s in text.sentences.iter().filter(|s| s.ends == Boundary::Pause) {
             let w = |i: usize| text.words.get(i).map_or("", |w| w.text.as_str());
             eprintln!(
-                "{} {} {} {} | {} {} gap {}",
+                "{} {} {} | {} {} gap {}",
                 if truth[s.last] { "  " } else { "✗ " },
                 w(s.last.saturating_sub(1)),
                 w(s.last),
-                "",
                 w(s.last + 1),
                 w(s.last + 2),
                 gap_after(&text.words, s.last.min(text.words.len() - 2))
