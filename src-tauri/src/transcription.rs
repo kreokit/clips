@@ -1397,18 +1397,39 @@ mod tests {
             "{name}: {} sentences, {by_punctuation} ending at punctuation",
             text.sentences.len()
         );
-        let settings = crate::moments::FinderSettings::default();
-        let found = crate::moments::find_in(
-            &output.transcript,
-            &output.loudness,
-            duration_ms,
-            &settings,
-            &[],
-            0,
-        );
-        assert_eq!(found.len(), crate::moments::wanted(&settings, duration_ms));
+        use crate::moments::{FinderSettings, Platform, find_in, wanted};
+        for platform in [Platform::TiktokRewards, Platform::Shorts] {
+            let settings = FinderSettings::for_platform(platform);
+            let found = find_in(
+                &output.transcript,
+                &output.loudness,
+                duration_ms,
+                &settings,
+                &[],
+                0,
+            );
+            assert_eq!(found.len(), wanted(&settings, duration_ms));
+            for m in &found {
+                let len = m.out_ms - m.in_ms;
+                assert!(
+                    len >= settings.min_ms && len <= settings.max_ms,
+                    "{platform:?}: {len} ms"
+                );
+            }
+            println!("{platform:?}:");
+            whole_script_sentences(name, &script, &found);
+        }
+    }
+
+    /// Checks (allowing one slip) that the clips start and end at sentences of the script.
+    fn whole_script_sentences(
+        name: &str,
+        script: &[Vec<String>],
+        found: &[crate::moments::Moment],
+    ) {
+        use crate::sentences::normalize;
         let mut whole = 0;
-        for m in &found {
+        for m in found {
             let words: Vec<String> = m
                 .text
                 .split_whitespace()

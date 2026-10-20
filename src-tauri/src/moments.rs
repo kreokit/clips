@@ -26,31 +26,93 @@ use serde::{Deserialize, Serialize};
 
 use crate::sentences::{self, Boundary, Sentence, Text, Token, is_number};
 
-/// What the finder looks for; stored in the project.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct FinderSettings {
-    pub min_ms: u64,
-    pub max_ms: u64,
-    pub target_ms: u64,
-    /// How many clips to propose; `None`: about one per [`AUTO_MS_PER_CLIP`] of video.
-    pub count: Option<usize>,
+/// The platform the clips are for, which sets their length (see [`Platform::preset`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Platform {
+    /// TikTok's Creator Rewards pay only for videos over a minute: 61–90 s.
+    TiktokRewards,
+    /// YouTube Shorts and Instagram Reels: 20–60 s.
+    Shorts,
+    /// The user's own lengths.
+    Custom,
 }
 
-impl Default for FinderSettings {
-    fn default() -> Self {
-        Self {
-            min_ms: 20_000,
-            max_ms: 60_000,
-            target_ms: 35_000,
-            count: None,
+impl Platform {
+    /// (min, max, target) in ms; `None` for Custom.
+    pub fn preset(self) -> Option<(u64, u64, u64)> {
+        match self {
+            Platform::TiktokRewards => Some((61_000, 90_000, 70_000)),
+            Platform::Shorts => Some((20_000, 60_000, 35_000)),
+            Platform::Custom => None,
+        }
+    }
+
+    /// One proposed clip per this much video, when no count is set.
+    pub fn ms_per_clip(self) -> u64 {
+        match self {
+            Platform::TiktokRewards => 180_000,
+            Platform::Shorts | Platform::Custom => 120_000,
         }
     }
 }
 
-/// One proposed clip per this much video, when no count is set…
-pub const AUTO_MS_PER_CLIP: u64 = 120_000;
-/// …but at least / at most this many.
+/// What the finder looks for; stored in the project.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FinderSettings {
+    /// `None` only in projects saved before presets existed; [`FinderSettings::upgraded`]
+    /// fills it in when a project loads.
+    #[serde(default)]
+    pub platform: Option<Platform>,
+    pub min_ms: u64,
+    pub max_ms: u64,
+    pub target_ms: u64,
+    /// How many clips to propose; `None`: about one per [`Platform::ms_per_clip`] of video.
+    pub count: Option<usize>,
+}
+
+impl Default for FinderSettings {
+    /// TikTok Rewards (the user's choice of default, 2026-10-20).
+    fn default() -> Self {
+        Self::for_platform(Platform::TiktokRewards)
+    }
+}
+
+impl FinderSettings {
+    /// A preset's lengths (Custom starts from the Shorts lengths), automatic count.
+    pub fn for_platform(platform: Platform) -> Self {
+        let (min_ms, max_ms, target_ms) = platform.preset().or(Platform::Shorts.preset()).unwrap();
+        Self {
+            platform: Some(platform),
+            min_ms,
+            max_ms,
+            target_ms,
+            count: None,
+        }
+    }
+
+    pub fn platform(&self) -> Platform {
+        self.platform.unwrap_or(Platform::Custom)
+    }
+
+    /// Settings saved before presets existed get the preset their lengths match, else
+    /// Custom.
+    pub fn upgraded(mut self) -> Self {
+        if self.platform.is_none() {
+            let lengths = Some((self.min_ms, self.max_ms, self.target_ms));
+            self.platform = Some(
+                [Platform::TiktokRewards, Platform::Shorts]
+                    .into_iter()
+                    .find(|p| p.preset() == lengths)
+                    .unwrap_or(Platform::Custom),
+            );
+        }
+        self
+    }
+}
+
+/// When no count is set, at least / at most this many.
 pub const AUTO_MIN: usize = 5;
 pub const AUTO_MAX: usize = 30;
 /// Picked clips may share at most this fraction of the shorter one.
@@ -763,8 +825,8 @@ pub fn candidates(ctx: &Context, settings: &FinderSettings) -> Vec<Moment> {
 /// How many clips to propose.
 pub fn wanted(settings: &FinderSettings, duration_ms: u64) -> usize {
     settings.count.unwrap_or_else(|| {
-        (((duration_ms + AUTO_MS_PER_CLIP / 2) / AUTO_MS_PER_CLIP) as usize)
-            .clamp(AUTO_MIN, AUTO_MAX)
+        let per = settings.platform().ms_per_clip();
+        (((duration_ms + per / 2) / per) as usize).clamp(AUTO_MIN, AUTO_MAX)
     })
 }
 
@@ -902,6 +964,7 @@ mod tests {
 
     fn settings(min: u64, max: u64, target: u64) -> FinderSettings {
         FinderSettings {
+            platform: Some(Platform::Custom),
             min_ms: min,
             max_ms: max,
             target_ms: target,
@@ -968,6 +1031,118 @@ mod tests {
     }
 
     #[test]
+    fn presets_and_older_settings() {
+        let t = FinderSettings::default();
+        assert_eq!((t.min_ms, t.max_ms, t.target_ms), (61_000, 90_000, 70_000));
+        let s = FinderSettings::for_platform(Platform::Shorts);
+        assert_eq!((s.min_ms, s.max_ms, s.target_ms), (20_000, 60_000, 35_000));
+        // Saved before presets: the preset the lengths match, else Custom.
+        let old = |min, max, target| FinderSettings {
+            platform: None,
+            min_ms: min,
+            max_ms: max,
+            target_ms: target,
+            count: None,
+        };
+        let platform = |f: FinderSettings| f.upgraded().platform;
+        assert_eq!(
+            platform(old(20_000, 60_000, 35_000)),
+            Some(Platform::Shorts)
+        );
+        assert_eq!(
+            platform(old(61_000, 90_000, 70_000)),
+            Some(Platform::TiktokRewards)
+        );
+        assert_eq!(
+            platform(old(15_000, 45_000, 30_000)),
+            Some(Platform::Custom)
+        );
+        let json = r#"{"min_ms":20000,"max_ms":60000,"target_ms":35000,"count":null}"#;
+        let read: FinderSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            read.platform, None,
+            "a missing platform isn't taken from the default"
+        );
+        assert_eq!(read.upgraded().platform, Some(Platform::Shorts));
+    }
+
+    #[test]
+    fn tiktok_clips_are_whole_sentences_over_a_minute() {
+        let (t, _) = realistic(3, false);
+        let s = FinderSettings::default();
+        with_ctx(&t, &[], |ctx| {
+            let all = candidates(ctx, &s);
+            assert!(all.len() > 50, "{}", all.len());
+            for m in &all {
+                let len = m.out_ms - m.in_ms;
+                assert!((61_000..=90_000).contains(&len), "{len}");
+                let (first, last) = (first_word(ctx, m), last_word(ctx, m));
+                assert!(
+                    ctx.text.sentences.iter().any(|x| x.first == first),
+                    "{}",
+                    m.text
+                );
+                assert!(
+                    ctx.text.sentences.iter().any(|x| x.last == last),
+                    "{}",
+                    m.text
+                );
+            }
+            let picked = find(ctx, &s, &[], 0);
+            assert_eq!(picked.len(), wanted(&s, ctx.duration_ms));
+            assert!(picked.iter().all(|m| m.out_ms - m.in_ms > 60_000));
+        });
+    }
+
+    fn first_word(ctx: &Context, m: &Moment) -> usize {
+        ctx.text
+            .words
+            .iter()
+            .position(|w| w.start_ms >= m.in_ms)
+            .unwrap()
+    }
+
+    fn last_word(ctx: &Context, m: &Moment) -> usize {
+        ctx.text
+            .words
+            .iter()
+            .rposition(|w| w.end_ms <= m.out_ms)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_short_strong_moment_grows_forward_into_a_long_clip() {
+        // Plain talk with one strong ~5 s moment in the middle: the best TikTok clip
+        // starts at that moment and takes the sentences after it, whole.
+        let hook = "Why do most furniture makers quit in their first year?";
+        let mut sentences = vec![PLAIN; 12];
+        sentences.push(hook);
+        sentences.extend(vec![PLAIN; 20]);
+        let t = talk(&sentences, 400);
+        let s = FinderSettings::default();
+        with_ctx(&t, &[], |ctx| {
+            let best = &find(ctx, &s, &[], 0)[0];
+            assert!(best.text.starts_with("Why do most"), "{}", best.text);
+            assert!(best.out_ms - best.in_ms > 60_000);
+            assert!(best.text.ends_with("winter months."));
+        });
+        // Near the end, with too little after it, a clip still holds it whole (it grows
+        // backward), though it no longer opens with it.
+        let mut sentences = vec![PLAIN; 20];
+        sentences.push(hook);
+        sentences.push(PLAIN);
+        let t = talk(&sentences, 400);
+        with_ctx(&t, &[], |ctx| {
+            let all = candidates(ctx, &s);
+            assert!(all.iter().any(|m| m.text.contains(hook)));
+            assert!(
+                !all.iter().any(|m| m.text.starts_with("Why do most")),
+                "no room after it"
+            );
+        });
+    }
+
+    #[test]
     fn picks_the_best_without_overlaps() {
         let (t, _) = realistic(3, false);
         let s = settings(20_000, 60_000, 35_000);
@@ -995,11 +1170,19 @@ mod tests {
     }
 
     #[test]
-    fn automatic_count_is_one_per_two_minutes_within_limits() {
-        let s = FinderSettings::default();
+    fn automatic_count_follows_the_platform_within_limits() {
+        // Shorts: one per 2 minutes.
+        let s = FinderSettings::for_platform(Platform::Shorts);
         assert_eq!(wanted(&s, 3 * 60_000), 5);
         assert_eq!(wanted(&s, 20 * 60_000), 10);
         assert_eq!(wanted(&s, 3 * 3_600_000), 30);
+        // TikTok Rewards (the default): one per 3 minutes.
+        let t = FinderSettings::default();
+        assert_eq!(t.platform, Some(Platform::TiktokRewards));
+        assert_eq!(wanted(&t, 10 * 60_000), 5);
+        assert_eq!(wanted(&t, 30 * 60_000), 10);
+        assert_eq!(wanted(&t, 60 * 60_000), 20);
+        assert_eq!(wanted(&t, 3 * 3_600_000), 30);
         assert_eq!(
             wanted(
                 &FinderSettings {
@@ -1308,7 +1491,7 @@ mod tests {
     #[test]
     fn unpunctuated_text_still_gives_clips_at_clean_pauses() {
         let (t, truth) = realistic(1, true);
-        let s = FinderSettings::default();
+        let s = FinderSettings::for_platform(Platform::Shorts);
         with_ctx(&t, &[], |ctx| {
             let picked = find(ctx, &s, &[], 0);
             assert!(!picked.is_empty());
