@@ -1369,7 +1369,12 @@ mod tests {
     #[test]
     #[ignore]
     fn real_transcript_moments() {
-        let path = std::path::PathBuf::from(std::env::var("KREOKIT_TRANSCRIPT").unwrap());
+        // CI runs the ignored tests too: without a transcript there is nothing to print.
+        let Ok(path) = std::env::var("KREOKIT_TRANSCRIPT") else {
+            eprintln!("KREOKIT_TRANSCRIPT not set, skipped");
+            return;
+        };
+        let path = std::path::PathBuf::from(path);
         let mut t: Transcript = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         if std::env::var("KREOKIT_STRIP").is_ok() {
             for w in t.segments.iter_mut().flat_map(|s| s.words.iter_mut()) {
