@@ -6,10 +6,11 @@ mod chunks;
 mod cpu;
 mod ffmpeg;
 mod models;
+// Used by the find_moments command (next commit).
+#[allow(dead_code)]
+mod moments;
 mod probe;
 mod projects;
-// Used by the moment finder (next commit).
-#[allow(dead_code)]
 mod sentences;
 mod transcribe;
 mod transcription;
