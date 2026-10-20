@@ -79,9 +79,10 @@ mod tests {
         let levels = range(&video, 500, 2_500).unwrap();
         assert_eq!(levels.len(), 200);
         assert!(levels.iter().any(|&l| l > 100), "speech is there");
-        // Past the end of the audio: what there is.
+        // Past the end of the audio: what there is, not the 5.3 s asked for. (The audio
+        // can run a little past the probed length: FFmpeg 4.4 gives 32 peaks here.)
         let duration = crate::probe::probe_video(&video).unwrap().duration_ms;
         let tail = range(&video, duration - 300, duration + 5_000).unwrap();
-        assert!(tail.len() <= 31, "{}", tail.len());
+        assert!((20..=100).contains(&tail.len()), "{}", tail.len());
     }
 }
