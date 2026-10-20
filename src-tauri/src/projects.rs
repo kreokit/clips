@@ -26,6 +26,9 @@ pub const FORMAT_VERSION: u32 = 1;
 
 const PROJECT_FILE: &str = "project.json";
 const THUMBNAIL_FILE: &str = "thumbnail.jpg";
+/// The finder settings chosen last (in any project), for new projects; in the projects
+/// folder, next to the project folders.
+const LAST_FINDER_FILE: &str = "last-finder.json";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Project {
@@ -179,7 +182,27 @@ pub fn load(root: &Path, id: &str) -> Result<Project, String> {
     if project.id != id {
         return Err("damaged project file: wrong id".into());
     }
-    Ok(project)
+    Ok(Project {
+        finder: project.finder.clone().upgraded(),
+        ..project
+    })
+}
+
+/// The finder settings for a new project: the last ones chosen, else the default
+/// (TikTok Rewards).
+pub fn last_finder(root: &Path) -> FinderSettings {
+    fs::read(root.join(LAST_FINDER_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<FinderSettings>(&b).ok())
+        .map(FinderSettings::upgraded)
+        .unwrap_or_default()
+}
+
+/// Remembers `finder` for new projects.
+pub fn remember_finder(root: &Path, finder: &FinderSettings) -> Result<(), String> {
+    fs::create_dir_all(root).map_err(|e| format!("cannot create {}: {e}", root.display()))?;
+    let json = serde_json::to_vec_pretty(finder).map_err(|e| e.to_string())?;
+    write_atomic(&root.join(LAST_FINDER_FILE), &json)
 }
 
 /// Saves `project` (the autosave). Returns it with `updated_at` set.
@@ -264,7 +287,7 @@ pub fn open_video(
         video_mtime_ms: mtime,
         video: info,
         transcription: Settings::default(),
-        finder: FinderSettings::default(),
+        finder: last_finder(root),
         clips: Vec::new(),
         created_at: now,
         opened_at: now,
@@ -546,6 +569,43 @@ mod tests {
         let old = load(&root, &p.id).unwrap();
         assert!(old.clips.is_empty());
         assert_eq!(old.finder, FinderSettings::default());
+    }
+
+    #[test]
+    fn new_projects_take_the_last_finder_settings() {
+        use crate::moments::Platform;
+        let (root, video) = setup("last-finder");
+        let other = video.with_file_name("other.mp4");
+        fs::write(&other, b"y").unwrap();
+        // Nothing chosen yet: TikTok Rewards.
+        let a = open_video(&root, &video, probe_ok, 1).unwrap();
+        assert_eq!(a.finder.platform, Some(Platform::TiktokRewards));
+        let shorts = FinderSettings::for_platform(Platform::Shorts);
+        remember_finder(&root, &shorts).unwrap();
+        let b = open_video(&root, &other, probe_ok, 2).unwrap();
+        assert_eq!(b.finder, shorts);
+        // Existing projects keep theirs; the file isn't taken for a project.
+        assert_eq!(
+            open_video(&root, &video, probe_ok, 3).unwrap().finder,
+            a.finder
+        );
+        assert_eq!(list(&root).len(), 2);
+    }
+
+    #[test]
+    fn older_projects_get_their_preset_from_their_lengths() {
+        use crate::moments::Platform;
+        let (root, video) = setup("upgrade-finder");
+        let p = open_video(&root, &video, probe_ok, 1).unwrap();
+        let path = root.join(&p.id).join(PROJECT_FILE);
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        json["finder"] = serde_json::json!({"min_ms": 20000, "max_ms": 60000, "target_ms": 35000, "count": null});
+        fs::write(&path, json.to_string()).unwrap();
+        assert_eq!(
+            load(&root, &p.id).unwrap().finder.platform,
+            Some(Platform::Shorts)
+        );
     }
 
     #[test]

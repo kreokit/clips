@@ -311,6 +311,13 @@ async fn waveform_range(
     Ok(tauri::ipc::Response::new(peaks))
 }
 
+/// Remembers the finder settings chosen last, for new projects.
+#[tauri::command]
+async fn remember_finder(app: AppHandle, finder: moments::FinderSettings) -> Result<(), String> {
+    let root = projects_root(&app)?;
+    blocking(move || projects::remember_finder(&root, &finder)).await
+}
+
 /// The project's finished transcript for these settings, and its loudness.
 fn finished(
     app: &AppHandle,
@@ -451,6 +458,7 @@ pub fn run() {
             transcript_text,
             find_moments,
             score_clips,
+            remember_finder,
             cpu_support,
             quit_app,
             report_problem,
