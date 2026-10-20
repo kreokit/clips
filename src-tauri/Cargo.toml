@@ -25,6 +25,8 @@ tauri-plugin-opener = "2"
 sha2 = "0.11.0"
 ureq = "3"
 whisper-rs = "0.16.0"
+# The same version whisper-rs uses; for reading finished segments while Whisper runs.
+whisper-rs-sys = "0.15.0"
 
 [profile.dev]
 opt-level = 1

@@ -9,7 +9,9 @@
 //! **Cache** (`<project>/transcript/`): `meta.json` records what the transcript is made
 //! from (settings, video size and time, part limits); any difference discards the folder.
 //! Each finished part is saved as `part-NNN.json` the moment it is done, so a cancelled
-//! (or crashed) run resumes after its last finished part. The finished transcript is
+//! (or crashed) run resumes after its last finished part. Inside a part, everything Whisper
+//! has finished is saved as `part-NNN.partial.json` after each of its 30-second windows, and
+//! a resume continues from there, so a cancel loses at most about half a minute. The finished transcript is
 //! `transcript.json`, with `loudness.json` (one level per second) next to it; the part
 //! files and the plan are removed then.
 //!
@@ -25,11 +27,11 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::audio::{AudioStream, Loudness, samples_to_ms};
+use crate::audio::{AudioStream, Loudness, ms_to_samples, samples_to_ms};
 use crate::chunks::{self, Limits};
 use crate::models::{CANCELLED, WhisperModel};
 use crate::projects::write_atomic;
-use crate::transcribe::{self, Engine, Options, Segment, Transcript};
+use crate::transcribe::{self, Checkpoint, Engine, Options, Segment, Transcript};
 
 /// Bump when the cache's contents change meaning; older caches are discarded.
 const CACHE_VERSION: u32 = 1;
@@ -109,6 +111,18 @@ struct Part {
     segments: Vec<Segment>,
 }
 
+/// The finished start of a part, saved while Whisper works on the rest (after each of
+/// its 30-second windows), so a cancel loses at most about that much.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct Partial {
+    start_ms: u64,
+    end_ms: u64,
+    /// The segments cover the part up to here; a resume continues from this time.
+    done_ms: u64,
+    language: Option<String>,
+    segments: Vec<Segment>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage {
@@ -153,24 +167,26 @@ impl AudioSource for AudioStream {
 
 /// Speech to text for one part: Whisper in the app, a fake in tests.
 pub trait Transcriber {
-    fn transcribe(
+    fn transcribe<'a>(
         &self,
-        samples: &[f32],
+        samples: &'a [f32],
         options: Options,
         cancel: &Arc<AtomicBool>,
-        on_progress: Box<dyn FnMut(i32)>,
+        on_progress: Box<dyn FnMut(i32) + 'a>,
+        on_checkpoint: Box<dyn FnMut(Checkpoint) + 'a>,
     ) -> Result<Transcript, String>;
 }
 
 impl Transcriber for Engine {
-    fn transcribe(
+    fn transcribe<'a>(
         &self,
-        samples: &[f32],
+        samples: &'a [f32],
         options: Options,
         cancel: &Arc<AtomicBool>,
-        on_progress: Box<dyn FnMut(i32)>,
+        on_progress: Box<dyn FnMut(i32) + 'a>,
+        on_checkpoint: Box<dyn FnMut(Checkpoint) + 'a>,
     ) -> Result<Transcript, String> {
-        Engine::transcribe(self, samples, options, cancel, on_progress)
+        Engine::transcribe(self, samples, options, cancel, on_progress, on_checkpoint)
     }
 }
 
@@ -185,6 +201,10 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 
 fn part_file(dir: &Path, index: usize) -> std::path::PathBuf {
     dir.join(format!("part-{index:03}.json"))
+}
+
+fn partial_file(dir: &Path, index: usize) -> std::path::PathBuf {
+    dir.join(format!("part-{index:03}.partial.json"))
 }
 
 fn cache_matches(dir: &Path, meta: &Meta) -> bool {
@@ -202,21 +222,31 @@ pub fn cached(dir: &Path, settings: &Settings, video: &Video, limits: &Limits) -
     })
 }
 
-/// How many parts a cancelled run has finished, and how many parts there are (once the
-/// audio has been planned). (0, None) if nothing is cached for these settings.
-pub fn finished_parts(
+/// How far a cancelled run got: the end of its saved work in ms (finished parts, then the
+/// checkpoint inside the next part), and how many parts there are once the audio has been
+/// planned. (0, None) if nothing is cached for these settings.
+pub fn saved_until(
     dir: &Path,
     settings: &Settings,
     video: &Video,
     limits: &Limits,
-) -> (usize, Option<usize>) {
+) -> (u64, Option<usize>) {
     if !cache_matches(dir, &Meta::new(settings, video, limits)) {
         return (0, None);
     }
-    match read_json::<Plan>(&dir.join(PLAN_FILE)) {
-        Some(plan) => (finished(dir, &plan).len(), Some(plan.parts.len())),
-        None => (0, None),
-    }
+    let Some(plan) = read_json::<Plan>(&dir.join(PLAN_FILE)) else {
+        return (0, None);
+    };
+    let parts = finished(dir, &plan);
+    let saved = match plan
+        .parts
+        .get(parts.len())
+        .and_then(|b| partial(dir, parts.len(), b))
+    {
+        Some(p) => p.done_ms,
+        None => parts.last().map_or(0, |p| p.end_ms),
+    };
+    (saved, Some(plan.parts.len()))
 }
 
 /// Estimated time left: the remaining audio at the speed measured so far.
@@ -362,7 +392,14 @@ fn finished(dir: &Path, plan: &Plan) -> Vec<Part> {
         .collect()
 }
 
-/// Transcribes the whole video into `dir`, resuming from finished parts. `open_audio`
+/// The checkpoint inside part `index`, if it belongs to these bounds.
+fn partial(dir: &Path, index: usize, bounds: &(u64, u64)) -> Option<Partial> {
+    let (start_ms, end_ms) = part_ms(bounds);
+    read_json::<Partial>(&partial_file(dir, index))
+        .filter(|p| p.start_ms == start_ms && p.end_ms == end_ms && p.done_ms >= start_ms)
+}
+
+/// Transcribes the whole video into `dir`, resuming from finished parts and checkpoints. `open_audio`
 /// starts the audio at a time in ms; `load` is called only if some part still needs
 /// Whisper. Returns [`CANCELLED`] if `cancel` is set; finished work stays cached.
 #[allow(clippy::too_many_arguments)]
@@ -417,20 +454,33 @@ pub fn run<T: Transcriber, A: AudioSource>(
     let mut worked_audio_ms = 0u64;
 
     if parts.len() < total {
-        let (first_ms, _) = part_ms(&plan.parts[parts.len()]);
+        let first = parts.len();
+        // A checkpoint inside the first unfinished part: continue from there.
+        let mut resume = partial(dir, first, &plan.parts[first]);
+        if language.is_none() {
+            language = resume.as_ref().and_then(|p| p.language.clone());
+        }
+        let first_ms = resume
+            .as_ref()
+            .map_or(part_ms(&plan.parts[first]).0, |p| p.done_ms);
         let mut audio = open_audio(first_ms)?;
-        for index in parts.len()..total {
+        for index in first..total {
             if cancel.load(Ordering::Relaxed) {
                 return Err(CANCELLED.into());
             }
-            let (start, end) = plan.parts[index];
             let (start_ms, end_ms) = part_ms(&plan.parts[index]);
-            let samples = read_exact(&mut audio, (end - start) as usize)?;
+            // Earlier work in this part (from a checkpoint) and where the rest starts.
+            let (from_ms, prior, prior_language) = match resume.take() {
+                Some(p) => (p.done_ms.min(end_ms), p.segments, p.language),
+                None => (start_ms, Vec::new(), None),
+            };
+            let end = plan.parts[index].1 as usize;
+            let samples = read_exact(&mut audio, end.saturating_sub(ms_to_samples(from_ms)))?;
             let mut part = Part {
                 start_ms,
                 end_ms,
-                language: None,
-                segments: Vec::new(),
+                language: prior_language.clone(),
+                segments: prior.clone(),
             };
             if chunks::has_sound(&samples) {
                 if engine.is_none() {
@@ -444,10 +494,12 @@ pub fn run<T: Transcriber, A: AudioSource>(
                     });
                     engine = Some((load.take().expect("loaded once"))()?);
                 }
-                let prompt = part_prompt(
-                    custom.as_deref(),
-                    parts.last().map_or(&[][..], |p| p.segments.as_slice()),
-                );
+                let previous = if prior.is_empty() {
+                    parts.last().map_or(&[][..], |p| p.segments.as_slice())
+                } else {
+                    prior.as_slice()
+                };
+                let prompt = part_prompt(custom.as_deref(), previous);
                 let options = Options {
                     language: language.as_deref(),
                     hide_non_speech: settings.hide_non_speech,
@@ -458,10 +510,10 @@ pub fn run<T: Transcriber, A: AudioSource>(
                 let report = {
                     let on_progress = on_progress.clone();
                     let (spent_before, worked_before) = (spent_ms, worked_audio_ms);
-                    let len_ms = end_ms - start_ms;
+                    let len_ms = end_ms - from_ms;
                     move |percent: i32| {
                         let done_ms = len_ms * percent.clamp(0, 100) as u64 / 100;
-                        let position_ms = (start_ms + done_ms).min(duration_ms);
+                        let position_ms = (from_ms + done_ms).min(duration_ms);
                         on_progress(Progress {
                             stage: Stage::Transcribing,
                             position_ms,
@@ -476,19 +528,36 @@ pub fn run<T: Transcriber, A: AudioSource>(
                         });
                     }
                 };
+                // Saving a checkpoint is best-effort: if it fails, a cancel just loses more.
+                let checkpoint = |c: Checkpoint| {
+                    let mut segments = prior.clone();
+                    segments.extend(place(c.segments, from_ms, end_ms));
+                    let _ = write_json(
+                        &partial_file(dir, index),
+                        &Partial {
+                            start_ms,
+                            end_ms,
+                            done_ms: (from_ms + c.done_ms).min(end_ms),
+                            language: c.language.or_else(|| prior_language.clone()),
+                            segments,
+                        },
+                    );
+                };
                 report(0);
                 let t = engine.as_ref().unwrap().transcribe(
                     &samples,
                     options,
                     cancel,
                     Box::new(report),
+                    Box::new(checkpoint),
                 )?;
                 spent_ms += started.elapsed().as_millis() as u64;
-                worked_audio_ms += end_ms - start_ms;
+                worked_audio_ms += end_ms - from_ms;
                 part.language = Some(t.language);
-                part.segments = place(t.segments, start_ms, end_ms);
+                part.segments.extend(place(t.segments, from_ms, end_ms));
             }
             write_json(&part_file(dir, index), &part)?;
+            let _ = fs::remove_file(partial_file(dir, index));
             if language.is_none() {
                 language = part.language.clone();
             }
@@ -512,6 +581,7 @@ pub fn run<T: Transcriber, A: AudioSource>(
     write_json(&dir.join(TRANSCRIPT_FILE), &output.transcript)?;
     for i in 0..total {
         let _ = fs::remove_file(part_file(dir, i));
+        let _ = fs::remove_file(partial_file(dir, i));
     }
     let _ = fs::remove_file(dir.join(PLAN_FILE));
     Ok(output)
@@ -606,20 +676,23 @@ mod tests {
 
     /// Writes one segment per part, "part<N> lasts <ms>", covering the whole part (and a
     /// little past its end, like Whisper sometimes does). Detects "en". Cancels on call
-    /// number `cancel_on` (1-based).
+    /// number `cancel_on` (1-based); on call `checkpoint_then_cancel`, first reports a
+    /// checkpoint "part<N> first" covering the first half.
     #[derive(Default)]
     struct FakeWhisper {
         calls: RefCell<Vec<Call>>,
         cancel_on: Option<usize>,
+        checkpoint_then_cancel: Option<usize>,
     }
 
     impl Transcriber for &FakeWhisper {
-        fn transcribe(
+        fn transcribe<'a>(
             &self,
-            samples: &[f32],
+            samples: &'a [f32],
             options: Options,
             cancel: &Arc<AtomicBool>,
-            mut on_progress: Box<dyn FnMut(i32)>,
+            mut on_progress: Box<dyn FnMut(i32) + 'a>,
+            mut on_checkpoint: Box<dyn FnMut(Checkpoint) + 'a>,
         ) -> Result<Transcript, String> {
             let len_ms = samples_to_ms(samples.len());
             let mut calls = self.calls.borrow_mut();
@@ -629,6 +702,27 @@ mod tests {
                 prompt: options.prompt.map(str::to_string),
             });
             if self.cancel_on == Some(calls.len()) {
+                cancel.store(true, Ordering::Relaxed);
+                return Err(CANCELLED.into());
+            }
+            if self.checkpoint_then_cancel == Some(calls.len()) {
+                let half = len_ms / 2;
+                let text = format!("part{} first", calls.len());
+                on_checkpoint(Checkpoint {
+                    done_ms: half,
+                    language: Some("en".into()),
+                    segments: vec![Segment {
+                        id: 0,
+                        start_ms: 0,
+                        end_ms: half,
+                        text: text.clone(),
+                        words: vec![Word {
+                            start_ms: 0,
+                            end_ms: half,
+                            text,
+                        }],
+                    }],
+                });
                 cancel.store(true, Ordering::Relaxed);
                 return Err(CANCELLED.into());
             }
@@ -790,8 +884,8 @@ mod tests {
         let (result, _) = go(&dir, &settings(), &VIDEO, speech(), &stopping);
         assert_eq!(result.unwrap_err(), CANCELLED);
         assert_eq!(
-            finished_parts(&dir, &settings(), &VIDEO, &SMALL),
-            (1, Some(3))
+            saved_until(&dir, &settings(), &VIDEO, &SMALL),
+            (4_500, Some(3))
         );
         assert_eq!(cached(&dir, &settings(), &VIDEO, &SMALL), None);
 
@@ -827,6 +921,64 @@ mod tests {
     }
 
     #[test]
+    fn a_resume_continues_from_the_checkpoint_inside_a_part() {
+        let dir = temp_dir("checkpoint");
+        let stopping = FakeWhisper {
+            checkpoint_then_cancel: Some(2),
+            ..FakeWhisper::default()
+        };
+        let (result, _) = go(&dir, &settings(), &VIDEO, speech(), &stopping);
+        assert_eq!(result.unwrap_err(), CANCELLED);
+        // Part 2 runs 4.5–9.7 s; its first half was saved.
+        assert_eq!(
+            saved_until(&dir, &settings(), &VIDEO, &SMALL),
+            (7_100, Some(3))
+        );
+
+        let opened = Arc::new(Mutex::new(Vec::new()));
+        let resumed = FakeWhisper::default();
+        resumed.calls.borrow_mut().push(Call {
+            len_ms: 0,
+            language: None,
+            prompt: None,
+        });
+        let out = run(
+            &dir,
+            &settings(),
+            &VIDEO,
+            &SMALL,
+            opener(speech(), opened.clone()),
+            || Ok(&resumed),
+            &Arc::new(AtomicBool::new(false)),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            *opened.lock().unwrap(),
+            [7_100],
+            "the audio starts at the checkpoint"
+        );
+        let calls = resumed.calls.borrow();
+        assert_eq!(calls[1].len_ms, 2_600, "only the rest of part 2");
+        assert_eq!(calls[1].prompt.as_deref(), Some("part2 first"));
+        assert_eq!(calls[1].language.as_deref(), Some("en"));
+
+        let texts: Vec<&str> = out
+            .transcript
+            .segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(
+            &texts[..3],
+            ["part1 lasts 4500", "part2 first", "part2 lasts 2600"]
+        );
+        let starts: Vec<u64> = out.transcript.segments.iter().map(|s| s.start_ms).collect();
+        assert_eq!(&starts[..3], [0, 4_500, 7_100]);
+        assert!(!dir.join("part-001.partial.json").exists());
+    }
+
+    #[test]
     fn changed_settings_or_video_start_over() {
         let dir = temp_dir("invalidate");
         let stopping = FakeWhisper {
@@ -835,20 +987,20 @@ mod tests {
         };
         let _ = go(&dir, &settings(), &VIDEO, speech(), &stopping);
         assert_eq!(
-            finished_parts(&dir, &settings(), &VIDEO, &SMALL),
-            (1, Some(3))
+            saved_until(&dir, &settings(), &VIDEO, &SMALL),
+            (4_500, Some(3))
         );
 
         let small = Settings {
             model: WhisperModel::Small,
             ..settings()
         };
-        assert_eq!(finished_parts(&dir, &small, &VIDEO, &SMALL), (0, None));
+        assert_eq!(saved_until(&dir, &small, &VIDEO, &SMALL), (0, None));
         let moved = Video {
             mtime_ms: 43,
             ..VIDEO
         };
-        assert_eq!(finished_parts(&dir, &settings(), &moved, &SMALL), (0, None));
+        assert_eq!(saved_until(&dir, &settings(), &moved, &SMALL), (0, None));
 
         let whisper = FakeWhisper::default();
         go(&dir, &small, &VIDEO, speech(), &whisper).0.unwrap();
@@ -957,8 +1109,8 @@ mod tests {
         };
         let _ = go(&dir, &settings(), &VIDEO, speech(), &stopping);
         assert_eq!(
-            finished_parts(&dir, &settings(), &VIDEO, &SMALL),
-            (2, Some(3))
+            saved_until(&dir, &settings(), &VIDEO, &SMALL),
+            (9_700, Some(3))
         );
         // Parts 1–2 cached; part 3 still needs the model.
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1045,7 +1197,7 @@ mod tests {
                 .join(" ")
         };
 
-        // Cancelled as soon as part 2 starts.
+        // Cancelled about two minutes into part 1: its checkpoints are kept.
         let dir = temp_dir("long");
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
@@ -1059,15 +1211,22 @@ mod tests {
             || Ok(base_engine()),
             &cancel,
             move |p| {
-                if p.part >= 2 && p.stage == Stage::Transcribing {
+                if p.stage == Stage::Transcribing && p.position_ms >= 120_000 {
                     stop.store(true, Ordering::Relaxed);
                 }
             },
         )
         .unwrap_err();
         assert_eq!(err, CANCELLED);
-        assert_eq!(finished_parts(&dir, &settings(), &video, &LIMITS).0, 1);
-        println!("part 1 and the cancel took {:.0?}", started.elapsed());
+        let saved = saved_until(&dir, &settings(), &video, &LIMITS).0;
+        assert!(
+            (60_000..=150_000).contains(&saved),
+            "saved inside part 1, at most ~30 s behind: {saved}"
+        );
+        println!(
+            "2 minutes and the cancel took {:.0?}; saved until {saved} ms",
+            started.elapsed()
+        );
 
         // Resumed.
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1090,8 +1249,10 @@ mod tests {
         let parts = log.last().unwrap().parts;
         assert!(parts >= 2, "{parts} parts");
         assert!(
-            log.iter().all(|p| p.part >= 2),
-            "part 1 came from the cache"
+            log.iter()
+                .filter(|p| p.stage == Stage::Transcribing)
+                .all(|p| p.position_ms >= saved),
+            "the saved start of part 1 came from the cache"
         );
         assert!(
             log.iter().any(|p| p.eta_ms.is_some()),

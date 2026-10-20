@@ -534,6 +534,7 @@ dependencies = [
  "tauri-plugin-opener",
  "ureq",
  "whisper-rs",
+ "whisper-rs-sys",
 ]
 
 [[package]]

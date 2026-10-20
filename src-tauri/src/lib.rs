@@ -190,12 +190,13 @@ fn transcript_job(
     Ok((project, dir, video))
 }
 
-/// What the Transcribe screen shows for these settings: a finished transcript, or how
-/// many parts a cancelled run has finished.
+/// What the Transcribe screen shows for these settings: a finished transcript, or how far
+/// a cancelled run got.
 #[derive(serde::Serialize)]
 struct TranscriptStatus {
     transcript: Option<Transcript>,
-    finished_parts: usize,
+    /// Saved work reaches this far into the video (0: nothing saved).
+    saved_until_ms: u64,
     /// How many parts the video has (estimated until the audio has been read once).
     parts: usize,
 }
@@ -209,11 +210,11 @@ async fn transcript_status(
     blocking(move || {
         let (_, dir, video) = transcript_job(&app, &id)?;
         let limits = &chunks::LIMITS;
-        let (finished, parts) = transcription::finished_parts(&dir, &settings, &video, limits);
+        let (saved_until_ms, parts) = transcription::saved_until(&dir, &settings, &video, limits);
         Ok(TranscriptStatus {
             transcript: transcription::cached(&dir, &settings, &video, limits)
                 .map(|o| o.transcript),
-            finished_parts: finished,
+            saved_until_ms,
             parts: parts
                 .unwrap_or_else(|| video.duration_ms.div_ceil(limits.target_ms).max(1) as usize),
         })

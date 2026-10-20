@@ -11,6 +11,7 @@
 //! feature (and `use_gpu`) for aarch64-apple-darwin once it can be tested on an Apple
 //! Silicon Mac.
 
+use std::ffi::{CStr, c_char, c_int, c_void};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +22,15 @@ use whisper_rs::{
     WhisperContextParameters,
 };
 
+use whisper_rs_sys::{
+    whisper_context, whisper_full_get_segment_t0_from_state,
+    whisper_full_get_segment_t1_from_state, whisper_full_get_segment_text_from_state,
+    whisper_full_get_token_data_from_state, whisper_full_get_token_text_from_state,
+    whisper_full_lang_id_from_state, whisper_full_n_segments_from_state,
+    whisper_full_n_tokens_from_state, whisper_lang_str, whisper_state,
+};
+
+use crate::audio::{ms_to_samples, samples_to_ms};
 use crate::models::{CANCELLED, WhisperModel};
 use crate::vad;
 
@@ -82,16 +92,20 @@ impl Engine {
     }
 
     /// Transcribes `samples` (16 kHz mono); times are relative to their start.
-    /// `on_progress` receives 0–100. Returns [`CANCELLED`] if `cancel` is set.
-    pub fn transcribe(
+    /// `on_progress` receives 0–100. `on_checkpoint` receives everything finished so far
+    /// each time Whisper moves on to its next 30-second window, so a caller can save it.
+    /// Returns [`CANCELLED`] if `cancel` is set.
+    pub fn transcribe<'a>(
         &self,
-        samples: &[f32],
+        samples: &'a [f32],
         options: Options,
         cancel: &Arc<AtomicBool>,
-        on_progress: impl FnMut(i32) + 'static,
+        on_progress: Box<dyn FnMut(i32) + 'a>,
+        on_checkpoint: Box<dyn FnMut(Checkpoint) + 'a>,
     ) -> Result<Transcript, String> {
         let ctx = &self.ctx;
         let mut state = ctx.create_state().map_err(|e| e.to_string())?;
+        let eot = ctx.token_eot();
 
         // Same as whisper.cpp's default greedy params; beam search is ~3x slower on CPU.
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
@@ -106,7 +120,20 @@ impl Engine {
         if let Some(prompt) = options.prompt {
             params.set_initial_prompt(prompt);
         }
-        params.set_progress_callback_safe(on_progress);
+        let mut callbacks = Callbacks {
+            on_progress,
+            on_checkpoint,
+            eot,
+            hide_non_speech: options.hide_non_speech,
+            samples,
+            seen: 0,
+        };
+        // SAFETY: `callbacks` outlives `state.full` below, which is the only time whisper.cpp
+        // calls `on_window` with it, on this thread.
+        unsafe {
+            params.set_progress_callback(Some(on_window));
+            params.set_progress_callback_user_data(&mut callbacks as *mut Callbacks as *mut c_void);
+        }
         let abort = cancel.clone();
         // whisper-rs 0.16 calls the closure as `F` but stores it as `Box<dyn FnMut>`, so `F`
         // must itself be that box type for the call to be sound.
@@ -121,61 +148,31 @@ impl Engine {
         }
         result.map_err(|e| format!("transcription failed: {e}"))?;
 
-        let eot = ctx.token_eot();
-        let mut segments = Vec::new();
-        let mut prev_end_ms = 0;
-        for seg in state.as_iter() {
-            let mut text = seg
-                .to_bytes()
-                .map(|b| String::from_utf8_lossy(b).trim().to_string())
-                .unwrap_or_default();
-            if text.is_empty() {
-                continue;
-            }
-            let tokens: Vec<RawToken> = (0..seg.n_tokens())
-                .filter_map(|t| seg.get_token(t))
-                .filter(|tok| tok.token_id() < eot) // drop special and timestamp tokens
-                .map(|tok| {
-                    let data = tok.token_data();
-                    RawToken {
-                        bytes: tok.to_bytes().unwrap_or_default().to_vec(),
-                        start_ms: centis_to_ms(data.t0),
-                        end_ms: centis_to_ms(data.t1),
-                        dtw_ms: (data.t_dtw >= 0).then(|| centis_to_ms(data.t_dtw)),
-                    }
-                })
-                .collect();
-            let mut words = align_words(group_tokens(&tokens), &mut prev_end_ms);
-            if options.hide_non_speech && !words.is_empty() {
-                let kept = strip_non_speech(words.clone());
-                if kept.is_empty() {
-                    continue;
-                }
-                if kept != words {
-                    text = kept
-                        .iter()
-                        .map(|w| w.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    words = kept;
-                }
-            }
-            let (start_ms, end_ms) = match (words.first(), words.last()) {
-                (Some(first), Some(last)) => (first.start_ms, last.end_ms),
-                _ => (
-                    centis_to_ms(seg.start_timestamp()),
-                    centis_to_ms(seg.end_timestamp()),
-                ),
-            };
-            segments.push(Segment {
-                id: segments.len() as u32,
-                start_ms,
-                end_ms,
-                text,
-                words,
-            });
-        }
-
+        let raw: Vec<RawSegment> = state
+            .as_iter()
+            .map(|seg| RawSegment {
+                text: seg
+                    .to_bytes()
+                    .map(|b| String::from_utf8_lossy(b).trim().to_string())
+                    .unwrap_or_default(),
+                t0: seg.start_timestamp(),
+                t1: seg.end_timestamp(),
+                tokens: (0..seg.n_tokens())
+                    .filter_map(|t| seg.get_token(t))
+                    .filter(|tok| tok.token_id() < eot) // drop special and timestamp tokens
+                    .map(|tok| {
+                        let data = tok.token_data();
+                        RawToken {
+                            bytes: tok.to_bytes().unwrap_or_default().to_vec(),
+                            start_ms: centis_to_ms(data.t0),
+                            end_ms: centis_to_ms(data.t1),
+                            dtw_ms: (data.t_dtw >= 0).then(|| centis_to_ms(data.t_dtw)),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
+        let mut segments = to_segments(raw, options.hide_non_speech);
         refine_with_audio(&mut segments, samples);
 
         let language = whisper_rs::get_lang_str(state.full_lang_id_from_state())
@@ -184,6 +181,149 @@ impl Engine {
             .unwrap_or_else(|| "auto".into());
         Ok(Transcript { language, segments })
     }
+}
+
+/// Everything Whisper has finished so far in a piece of audio.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Checkpoint {
+    /// The finished segments cover the audio up to here (ms from the piece's start).
+    pub done_ms: u64,
+    /// Detected language, if known yet.
+    pub language: Option<String>,
+    pub segments: Vec<Segment>,
+}
+
+/// A Whisper segment as read from its state, before word alignment.
+struct RawSegment {
+    text: String,
+    /// Whisper's segment bounds, in 10 ms units.
+    t0: i64,
+    t1: i64,
+    tokens: Vec<RawToken>,
+}
+
+/// Word timings, the sound-tag filter and segment bounds (Captions' rules), for the raw
+/// segments in order. Does not look at the audio ([`refine_with_audio`] does).
+fn to_segments(raw: Vec<RawSegment>, hide_non_speech: bool) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    let mut prev_end_ms = 0;
+    for seg in raw {
+        let mut text = seg.text;
+        if text.is_empty() {
+            continue;
+        }
+        let mut words = align_words(group_tokens(&seg.tokens), &mut prev_end_ms);
+        if hide_non_speech && !words.is_empty() {
+            let kept = strip_non_speech(words.clone());
+            if kept.is_empty() {
+                continue;
+            }
+            if kept != words {
+                text = kept
+                    .iter()
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                words = kept;
+            }
+        }
+        let (start_ms, end_ms) = match (words.first(), words.last()) {
+            (Some(first), Some(last)) => (first.start_ms, last.end_ms),
+            _ => (centis_to_ms(seg.t0), centis_to_ms(seg.t1)),
+        };
+        segments.push(Segment {
+            id: segments.len() as u32,
+            start_ms,
+            end_ms,
+            text,
+            words,
+        });
+    }
+    segments
+}
+
+/// What `on_window` needs while `state.full` runs.
+struct Callbacks<'a> {
+    on_progress: Box<dyn FnMut(i32) + 'a>,
+    on_checkpoint: Box<dyn FnMut(Checkpoint) + 'a>,
+    eot: i32,
+    hide_non_speech: bool,
+    samples: &'a [f32],
+    /// Segments already reported in a checkpoint.
+    seen: c_int,
+}
+
+fn c_text(ptr: *const c_char) -> Vec<u8> {
+    if ptr.is_null() {
+        return Vec::new();
+    }
+    // SAFETY: whisper.cpp returns NUL-terminated strings that live as long as the state.
+    unsafe { CStr::from_ptr(ptr) }.to_bytes().to_vec()
+}
+
+/// whisper.cpp's progress callback. It runs at the start of every 30-second window; all
+/// segments from earlier windows are final by then (including their DTW word times), so
+/// new ones become a checkpoint. (whisper.cpp's new-segment callback isn't used: with DTW
+/// on, it only fires for some windows.)
+unsafe extern "C" fn on_window(
+    ctx: *mut whisper_context,
+    state: *mut whisper_state,
+    progress: c_int,
+    user_data: *mut c_void,
+) {
+    // SAFETY: `user_data` is the `Callbacks` set in `Engine::transcribe`, alive and not
+    // otherwise borrowed while `state.full` runs; `ctx` and `state` are whisper.cpp's own.
+    let cb = unsafe { &mut *(user_data as *mut Callbacks) };
+    let n = unsafe { whisper_full_n_segments_from_state(state) };
+    if n > cb.seen {
+        cb.seen = n;
+        let raw: Vec<RawSegment> = (0..n)
+            .map(|i| unsafe {
+                RawSegment {
+                    text: String::from_utf8_lossy(&c_text(
+                        whisper_full_get_segment_text_from_state(state, i),
+                    ))
+                    .trim()
+                    .to_string(),
+                    t0: whisper_full_get_segment_t0_from_state(state, i),
+                    t1: whisper_full_get_segment_t1_from_state(state, i),
+                    tokens: (0..whisper_full_n_tokens_from_state(state, i))
+                        .filter_map(|j| {
+                            let data = whisper_full_get_token_data_from_state(state, i, j);
+                            (data.id < cb.eot).then(|| RawToken {
+                                bytes: c_text(whisper_full_get_token_text_from_state(
+                                    ctx, state, i, j,
+                                )),
+                                start_ms: centis_to_ms(data.t0),
+                                end_ms: centis_to_ms(data.t1),
+                                dtw_ms: (data.t_dtw >= 0).then(|| centis_to_ms(data.t_dtw)),
+                            })
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        let last_t1 = raw.last().map_or(0, |s| centis_to_ms(s.t1));
+        let mut segments = to_segments(raw, cb.hide_non_speech);
+        let piece_ms = samples_to_ms(cb.samples.len());
+        let done_ms = segments
+            .last()
+            .map_or(0, |s| s.end_ms)
+            .max(last_t1)
+            .min(piece_ms);
+        refine_with_audio(&mut segments, &cb.samples[..ms_to_samples(done_ms)]);
+        let language = unsafe {
+            let id = whisper_full_lang_id_from_state(state);
+            let name = whisper_lang_str(id);
+            (!name.is_null()).then(|| String::from_utf8_lossy(&c_text(name)).into_owned())
+        };
+        (cb.on_checkpoint)(Checkpoint {
+            done_ms,
+            language,
+            segments,
+        });
+    }
+    (cb.on_progress)(progress);
 }
 
 /// Turns the user's "custom words" (names, brands, jargon; separated by commas or new
@@ -731,7 +871,8 @@ pub(crate) mod tests {
                         prompt,
                     },
                     &Arc::new(AtomicBool::new(false)),
-                    |_| {},
+                    Box::new(|_| {}),
+                    Box::new(|_| {}),
                 )
                 .unwrap();
             t.segments
@@ -790,7 +931,8 @@ pub(crate) mod tests {
                     ..Options::default()
                 },
                 &Arc::new(AtomicBool::new(false)),
-                |_| {},
+                Box::new(|_| {}),
+                Box::new(|_| {}),
             )
             .unwrap();
         let elapsed = started.elapsed();
