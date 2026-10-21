@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-21):** Milestones 1–5 (Scaffold, Transcribe long videos, moment finder + clips board, Reframe, Captions + export all) are done and tested. Milestone 6 (Release): go given 2026-10-21, in progress.
+**Status (2026-10-21):** Milestones 1–5 (Scaffold, Transcribe long videos, moment finder + clips board, Reframe, Captions + export all) are done and tested. Milestone 6 (Release): draft pre-release v0.1.0-alpha built 2026-10-21 (release run 39586350228, all checks passed), waiting for the user's self-test on the Intel build and app test before publishing.
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -181,6 +181,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
      - **Self-test fixture:** one ~12 s synthetic video (the `moving-face` picture + `say` speech of a known script), made by `scripts/make_reframe_fixtures.py`; the self-test finds moments on it with Custom lengths.
      - **No release shows "Latest":** v0.1.0-alpha is a pre-release, and `models-v1` / `models-v2` were marked pre-releases too (done 2026-10-21; the app downloads models only by tag, `…/releases/download/models-vN/<file>`, never `/releases/latest`; checked). New `models-vN` mirrors are created as pre-releases. Never link `/releases/latest`; link the tag.
      - **Self-test (`selftest.rs`, built 2026-10-21):** `clips --self-test fixtures/selftest/speaker.mp4 --reference fixtures/selftest/speaker.txt --models <dir> [--fonts <dir>]` runs the app's own code: CPU check; release builds must use the FFmpeg next to the executable; Whisper Base through `transcription::run` (WER ≤ 0.3); `moments::find_in` with Custom 4–11 s (≥ 1 moment); BlazeFace through `analysis::run` (faces on ≥ 80% of samples) and `auto_path` (the biggest face inside the crop, ±2%, on every sample of the best moment); that moment exported twice through `batch::export_one` (Follow face and Fit + blur, captions, SRT, the ffprobe check); then `export::self_check`. Fonts default to the bundle's `fonts` (`Contents/Resources/fonts` on macOS, next to the executable elsewhere). The fixture's sentences are 0.6 s apart (`say` `[[slnc 600]]`): without pauses Whisper joined them with commas into one 8 s sentence. Dev Mac: passes in ~12 s; with `KREOKIT_DEV_ENCODER=openh264` too (FFmpeg 9's OpenH264 made High).
+     - **First release run (2026-10-21, 39586350228): all green.** Self-test on all four builds: WER 0.000, the same moment, faces on 45/48 samples, face inside the crop 22/22, both exports High yuv420p. macOS used VideoToolbox; **Windows fell back to OpenH264 (it made High): Media Foundation's H.264 encoder isn't usable on the Windows runner**, so MF is untested in CI. The README's Download section waits on branch `readme-downloads` (merge when publishing).
      - Push after every step; stop when the draft pre-release is ready (the user runs `--self-test` on the Intel build and tests the app before publishing).
 
 ## Tests (our oracle)
