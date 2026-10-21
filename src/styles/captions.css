@@ -1,0 +1,200 @@
+/* Captions on the 9:16 preview (from KreoKit Captions' App.css), the safe area and the
+   editor's caption bits. */
+
+/* Caption overlay: positioned like the ASS export (see overlayStyle in CaptionOverlay.tsx). */
+.overlay {
+  /* Caption fonts render with their default glyphs, as libass does; the UI's Inter
+     stylistic sets (base.css) must not leak in. */
+  font-feature-settings: normal;
+  position: absolute;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.overlay-line {
+  white-space: pre;
+}
+
+/* The caption's anchor is placed with left/top (placement in position.ts); shift the box
+   so the anchor is its top-centre, centre or bottom-centre, like ASS \an8 / 5 / 2. */
+.overlay-top {
+  transform: translate(-50%, 0);
+  transform-origin: 50% 0;
+}
+
+.overlay-middle {
+  transform: translate(-50%, -50%);
+  transform-origin: 50% 50%;
+}
+
+.overlay-bottom {
+  transform: translate(-50%, -100%);
+  transform-origin: 50% 100%;
+}
+
+/* Pop: scale up from the caption's anchor, like \fscx/\fscy with \t in ASS. */
+.overlay.pop {
+  animation: overlay-pop var(--pop-ms) linear both;
+}
+
+@keyframes overlay-pop {
+  from {
+    scale: var(--pop-from);
+  }
+  to {
+    scale: 1;
+  }
+}
+
+/* Dragging captions on the video */
+
+.overlay.draggable {
+  pointer-events: auto;
+  cursor: grab;
+  outline-offset: 6px;
+  touch-action: none;
+}
+
+.overlay.draggable:hover {
+  outline: 1px solid rgb(255 255 255 / 0.6);
+}
+
+.overlay.dragging,
+.overlay.dragging:hover {
+  cursor: grabbing;
+  outline: 1px solid var(--color-accent);
+}
+
+.overlay.ghost {
+  opacity: 0.45;
+}
+
+.overlay-grip {
+  position: absolute;
+  left: 50%;
+  top: -30px;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-3);
+  color: var(--color-text);
+  line-height: 0;
+}
+
+.overlay.draggable:hover .overlay-grip,
+.overlay.dragging .overlay-grip {
+  display: flex;
+}
+
+.caption-guide {
+  position: absolute;
+  z-index: 1;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+.caption-guide-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.caption-guide-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* Social safe area (editor only) */
+
+.safe-area {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.safe-area-zone {
+  position: absolute;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 6px;
+  background: rgb(255 90 95 / 0.16);
+  outline: 1px solid rgb(255 90 95 / 0.55);
+  outline-offset: -1px;
+}
+
+.safe-area-zone span {
+  font: 500 10px/12px var(--font-ui);
+  color: rgb(255 255 255 / 0.75);
+}
+
+/* Editor: Framing / Captions beside the preview. */
+.editor-side-panel {
+  flex: none;
+  width: 312px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.editor-side-panel .framing {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-captions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.editor-captions .framing-hint {
+  padding: 0 var(--space-1) var(--space-3);
+}
+
+/* Captions covering a face: a small warning, the time seeks there. */
+.editor-cover-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  font: var(--text-meta);
+  color: var(--color-warning);
+  cursor: pointer;
+}
+
+.editor-cover-warning:hover {
+  border-color: var(--color-border-strong);
+}
+
+/* Fixed words in the clip text: dotted underline; hidden ones struck through. */
+.editor-words .word.fixed {
+  text-decoration: underline dotted var(--color-text-3);
+  text-underline-offset: 3px;
+}
+
+.editor-words .word.hidden {
+  text-decoration: line-through;
+  color: var(--color-text-3);
+}
+
+.word-fix {
+  margin-right: 0.25em;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  outline: none;
+}

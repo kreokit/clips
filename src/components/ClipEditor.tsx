@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
@@ -34,7 +34,25 @@ import {
   snapTargets,
   wordIndexAt,
 } from "../lib/clipEdit";
-import { Clip, CropMode, Framing, SpokenText, applyScores, manualClip, scoreClips, spokenText, tiktokWarning } from "../lib/clips";
+import { fixedText, isFixed, setFix } from "../lib/captions/fixes";
+import { useClipCaptions, useClipFaces } from "../lib/captions/hooks";
+import { overlayFrame } from "../lib/captions/overlay";
+import { FrameView, captionRect, coveredTimes, overlapWarning } from "../lib/captions/overlap";
+import { loadShowSafeArea, saveShowSafeArea } from "../lib/captions/safeArea";
+import { lineMeasurer, useFittedStyle } from "../lib/captions/textMetrics";
+import type { Style, WordFix } from "../lib/captions/types";
+import {
+  Clip,
+  CropMode,
+  Framing,
+  SpokenText,
+  applyScores,
+  manualClip,
+  rememberStyle,
+  scoreClips,
+  spokenText,
+  tiktokWarning,
+} from "../lib/clips";
 import { useCropPath } from "../lib/faces";
 import {
   centerPath,
@@ -52,10 +70,16 @@ import { Project, formatDuration } from "../lib/projects";
 import { SNAP_PX, View, clampView, follow, msAt, tickLabel, tickStep, xAt, zoomAt } from "../lib/timeline";
 import { normalized } from "../lib/transcription";
 import { useProject } from "../store/project";
-import { Button, IconButton, Popover, toast } from "../ui";
+import { Button, IconButton, Popover, Tabs, toast } from "../ui";
+import { CaptionOverlay, OUTPUT, SafeAreaOverlay } from "./CaptionOverlay";
+import { CaptionsPanel } from "./CaptionsPanel";
 import { WhyThisClip } from "./ClipsBoard";
 import { FramingPanel } from "./FramingPanel";
 import "../styles/editor.css";
+import "../styles/captions.css";
+import "../styles/style-panel.css";
+
+const NO_CAPTIONS: never[] = [];
 
 /** Peaks per second from `waveform_range` (src-tauri/src/waveform.rs). */
 const PEAKS_PER_SECOND = 100;
@@ -63,6 +87,14 @@ const PEAKS_PER_SECOND = 100;
 const WAVEFORM_MARGIN_MS = 30_000;
 /** A press that moves less than this is a click, not a drag. */
 const CLICK_PX = 3;
+/** The caption style is remembered for new projects this long after the last change. */
+const REMEMBER_STYLE_MS = 800;
+
+type SideTab = "framing" | "captions";
+const SIDE_TABS: { value: SideTab; label: string }[] = [
+  { value: "framing", label: "Framing" },
+  { value: "captions", label: "Captions" },
+];
 
 /**
  * Edits one clip: the 9:16 preview with its framing (follow the face, centre, fit + blur,
@@ -107,6 +139,15 @@ export function ClipEditor({
   const [areaSize, setAreaSize] = useState({ width: 0, height: 0 });
   // Counts loaded / sought frames, so the overview redraws even when the time is the same.
   const [frames, setFrames] = useState(0);
+  const [sideTab, setSideTab] = useState<SideTab>("framing");
+  const [showSafeArea, setShowSafeArea] = useState(loadShowSafeArea);
+  // The clip's captions (saved in/out points, project word fixes) and the style as this
+  // clip shows it: shrunk if its longest caption is too wide, kept inside the frame.
+  const captions = useClipCaptions(project, clip?.in_ms ?? 0, clip?.out_ms ?? 0);
+  const fitted = useFittedStyle(captions ?? NO_CAPTIONS, project.style, OUTPUT);
+  const faces = useClipFaces(project.id, clip?.in_ms ?? 0, clip?.out_ms ?? 0, pathState.kind === "ready");
+  const rememberTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(rememberTimer.current), []);
 
   // Redraws the overview (and Fit + blur's background) after a seek or load, a few times:
   // WebKit may not have the new frame ready to draw yet (drawing then gives black), and
@@ -247,6 +288,28 @@ export function ClipEditor({
     [clipId, update],
   );
 
+  /** One style for every clip of the project; remembered for new projects. */
+  const setStyle = useCallback(
+    (patch: Partial<Style>) => {
+      const p = useProject.getState().project;
+      if (!p) return;
+      const style = { ...p.style, ...patch };
+      update({ style });
+      clearTimeout(rememberTimer.current);
+      rememberTimer.current = setTimeout(() => void rememberStyle(style).catch(() => {}), REMEMBER_STYLE_MS);
+    },
+    [update],
+  );
+
+  /** A word shown differently in every clip (decided 2026-10-21: fixes per project). */
+  const fixWord = useCallback(
+    (word: { start_ms: number; text: string }, text: string) => {
+      const p = useProject.getState().project;
+      if (p) update({ word_fixes: setFix(p.word_fixes, word, text) });
+    },
+    [update],
+  );
+
   const setStatus = useCallback(
     (status: Clip["status"]) => {
       const p = useProject.getState().project;
@@ -346,6 +409,23 @@ export function ClipEditor({
     const h = v.videoHeight * scale;
     ctx.drawImage(v, (54 - w) / 2, (96 - h) / 2, w, h);
   }, [currentMs, frames, pos === null, box.width]);
+
+  // Where the caption covers a face (any mode: a manual crop or a caption dragged up).
+  const covered = useMemo(() => {
+    if (!clip || !faces || !captions || !fitted || !keys) return null;
+    const measure = lineMeasurer(fitted);
+    const captionAt = (ms: number) => {
+      const f = overlayFrame(captions, ms - clip.in_ms, fitted);
+      return f && captionRect(f.lines.map((line) => measure(line.map((w) => w.text).join(" "))), fitted);
+    };
+    const viewAt = (ms: number): FrameView =>
+      clip.framing.mode === "fit_blur"
+        ? { kind: "fit", source }
+        : { kind: "crop", axis: geometry.axis, span, pos: positionAt(keys, ms) };
+    return overlapWarning(coveredTimes(faces, captionAt, viewAt));
+    // keys and geometry follow the clip's framing and path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faces, captions, fitted, clip?.framing, clip?.in_ms, auto, span, source.width, source.height]);
 
   if (!clip || !shown) return null;
   const length = shown.out_ms - shown.in_ms;
@@ -459,6 +539,17 @@ export function ClipEditor({
                   onSeeked={frameShown}
                   onError={() => setVideoError(true)}
                 />
+                {showSafeArea && <SafeAreaOverlay />}
+                {captions && fitted && box.height > 0 && (
+                  <CaptionOverlay
+                    segments={captions}
+                    style={fitted}
+                    clipMs={currentMs - clip.in_ms}
+                    frame={box}
+                    ghost={sideTab === "captions"}
+                    onPlace={setStyle}
+                  />
+                )}
               </div>
               {videoError && (
                 <p className="editor-video-error">
@@ -466,28 +557,55 @@ export function ClipEditor({
                 </p>
               )}
             </div>
-            <FramingPanel
-              framing={clip.framing}
-              pathState={pathState}
-              video={video.current}
-              source={source}
-              axis={geometry.axis}
-              span={span}
-              pos={pos}
-              currentMs={currentMs}
-              frameKey={`${currentMs}:${frames}`}
-              lowRes={lowResolution(source.width, source.height)}
-              onMode={onMode}
-              onDrag={onDrag}
-              onRemoveKeyframe={() => setFraming({ ...clip.framing, manual: removeKeyframe(clip.framing.manual, currentMs) })}
-              onRetry={retryPath}
-            />
+            <div className="editor-side-panel">
+              <Tabs label="Clip settings" value={sideTab} tabs={SIDE_TABS} onChange={setSideTab} />
+              {sideTab === "framing" ? (
+                <FramingPanel
+                  framing={clip.framing}
+                  pathState={pathState}
+                  video={video.current}
+                  source={source}
+                  axis={geometry.axis}
+                  span={span}
+                  pos={pos}
+                  currentMs={currentMs}
+                  frameKey={`${currentMs}:${frames}`}
+                  lowRes={lowResolution(source.width, source.height)}
+                  onMode={onMode}
+                  onDrag={onDrag}
+                  onRemoveKeyframe={() => setFraming({ ...clip.framing, manual: removeKeyframe(clip.framing.manual, currentMs) })}
+                  onRetry={retryPath}
+                />
+              ) : (
+                <div className="editor-captions">
+                  <CaptionsPanel
+                    style={project.style}
+                    fitted={fitted}
+                    onStyle={setStyle}
+                    showSafeArea={showSafeArea}
+                    onShowSafeArea={(show) => {
+                      setShowSafeArea(show);
+                      saveShowSafeArea(show);
+                    }}
+                  />
+                  <p className="framing-hint">
+                    One look for every clip of this video. To fix a word, double-click it in the text.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
           <div className="editor-controls">
             <IconButton icon={playing ? Pause : Play} label={playing ? "Pause" : "Play clip"} shortcut="Space" onClick={playClip} />
             <span className="editor-time tabular">
               {formatDuration(Math.max(0, currentMs - shown.in_ms))} / {formatDuration(length)}
             </span>
+            {covered !== null && (
+              <button type="button" className="editor-cover-warning" onClick={() => seek(covered)} title="Show it">
+                <AlertTriangle size={14} strokeWidth={2} aria-hidden />
+                Captions cover a face at {formatDuration(Math.max(0, covered - clip.in_ms))}
+              </button>
+            )}
             <span className="editor-hint">I / O set the in / out point at the playhead</span>
           </div>
         </div>
@@ -497,6 +615,8 @@ export function ClipEditor({
           currentMs={currentMs}
           onSeek={seek}
           onMake={(a, b) => text && void createClip(clipFromWords(text, a, b, durationMs))}
+          fixes={project.word_fixes}
+          onFix={fixWord}
         />
       </div>
 
@@ -519,7 +639,8 @@ export function ClipEditor({
 
 /**
  * The clip's words with a sentence of context; the spoken word is highlighted, a click
- * seeks, and dragging across words offers to make a clip of their sentences.
+ * seeks, and dragging across words offers to make a clip of their sentences. A
+ * double-click fixes a word in the captions (every clip; empty hides it).
  */
 function ClipWords({
   text,
@@ -527,14 +648,19 @@ function ClipWords({
   currentMs,
   onSeek,
   onMake,
+  fixes,
+  onFix,
 }: {
   text: SpokenText | null;
   clip: Range;
   currentMs: number;
   onSeek: (ms: number) => void;
   onMake: (from: number, to: number) => void;
+  fixes: WordFix[];
+  onFix: (word: { start_ms: number; text: string }, text: string) => void;
 }) {
   const list = useRef<HTMLDivElement>(null);
+  const [editing, setEditing] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number] | null>(null);
   const [selecting, setSelecting] = useState(false);
   const range = text ? contextWords(text, clip) : null;
@@ -592,12 +718,34 @@ function ClipWords({
           <p key={s.first} className="editor-sentence">
             {text.words.slice(s.first, s.last + 1).map((w, k) => {
               const i = s.first + k;
+              if (i === editing) {
+                return (
+                  <WordFixInput
+                    key={i}
+                    initial={fixedText(fixes, w)}
+                    onDone={(value) => {
+                      setEditing(null);
+                      if (value !== null) onFix(w, value);
+                    }}
+                  />
+                );
+              }
               const inClip = inside !== null && i >= inside[0] && i <= inside[1];
-              const cls = ["word", !inClip && "outside", i === current && "current", i >= lo && i <= hi && "selected"];
+              const shownText = fixedText(fixes, w);
+              const fixed = isFixed(fixes, w);
+              const cls = [
+                "word",
+                !inClip && "outside",
+                i === current && "current",
+                i >= lo && i <= hi && "selected",
+                fixed && "fixed",
+                fixed && !shownText && "hidden",
+              ];
               return (
                 <span
                   key={i}
                   className={cls.filter(Boolean).join(" ")}
+                  title={fixed ? `Whisper wrote “${w.text}” · double-click to fix` : "Double-click to fix this word"}
                   onPointerDown={(e) => {
                     if (e.button !== 0) return;
                     e.preventDefault();
@@ -605,8 +753,12 @@ function ClipWords({
                     setSelection([i, i]);
                   }}
                   onPointerEnter={() => selecting && setSelection((sel) => (sel ? [sel[0], i] : [i, i]))}
+                  onDoubleClick={() => {
+                    setSelection(null);
+                    setEditing(i);
+                  }}
                 >
-                  {w.text}{" "}
+                  {shownText || w.text}{" "}
                 </span>
               );
             })}
@@ -615,6 +767,36 @@ function ClipWords({
         ))}
       </div>
     </div>
+  );
+}
+
+/** A word being fixed: Enter or leaving saves, Escape cancels (`onDone(null)`). */
+function WordFixInput({ initial, onDone }: { initial: string; onDone: (value: string | null) => void }) {
+  const [value, setValue] = useState(initial);
+  const done = useRef(false);
+  const finish = (v: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(v);
+  };
+  return (
+    <input
+      className="word-fix"
+      aria-label="Fix this word"
+      autoFocus
+      value={value}
+      size={Math.max(value.length, 3)}
+      onChange={(e) => setValue(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") finish(value);
+        else if (e.key === "Escape") finish(null);
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onBlur={() => finish(value)}
+    />
   );
 }
 

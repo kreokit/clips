@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Segment, WordFix } from "./captions/types";
+import type { Segment, Style, WordFix } from "./captions/types";
 import type { Project, TranscriptionSettings } from "./projects";
 import { normalized } from "./transcription";
 
@@ -54,6 +54,8 @@ export const tiktokWarning = (lengthMs: number, f: FinderSettings) =>
 
 /** Remembers the finder settings for new projects. */
 export const rememberFinder = (finder: FinderSettings) => invoke<void>("remember_finder", { finder });
+/** Remembers the caption style for new projects. */
+export const rememberStyle = (style: Style) => invoke<void>("remember_style", { style });
 
 /** src-tauri/src/moments.rs `FeatureKind`. */
 export type FeatureKind = "hook" | "start" | "ending" | "energy" | "length";
