@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { applyScores, scoreClips } from "../lib/clips";
+import { applyScores, forgetSpokenText, scoreClips } from "../lib/clips";
 import { describeShape, fileName, formatBytes, formatDuration, formatFps } from "../lib/projects";
 import { closeProject, useProject } from "../store/project";
 import { Transcript, cancelJob, normalized } from "../lib/transcription";
@@ -45,6 +45,9 @@ export function ProjectView() {
   const onTranscript = useCallback((t: Transcript | null, fresh: boolean) => {
     setTranscript(t);
     if (t && fresh) {
+      // The editor must read the new words, not the last transcript's.
+      const p = useProject.getState().project;
+      if (p) forgetSpokenText(p.id);
       setTab("clips");
       void rescoreAll();
     }

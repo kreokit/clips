@@ -249,7 +249,13 @@ export function fixRange(f: FinderSettings): FinderSettings {
 }
 
 const texts = new Map<string, Promise<SpokenText>>();
-/** The transcript's words and sentences, read once per project and transcript settings. */
+
+/** Forgets the project's words, after a new transcript (its times may differ). */
+export function forgetSpokenText(projectId: string) {
+  for (const key of texts.keys()) if (key.startsWith(`${projectId} `)) texts.delete(key);
+}
+
+/** The transcript's words and sentences, read once per transcript (see `forgetSpokenText`). */
 export function spokenText(project: Project): Promise<SpokenText> {
   const settings = normalized(project.transcription);
   const key = `${project.id} ${JSON.stringify(settings)}`;
