@@ -359,15 +359,75 @@ MODEL_CARD_URL = "https://drive.google.com/file/d/1jpQt8TB1nMFQ49VSSBKdNEdQOygNR
 
 
 def convert(source: Path, target: Path) -> str:
-    """tf2onnx in its own process with a fixed hash seed: its folded-constant names follow
-    Python's set order, which otherwise changes every run. Returns the file's SHA-256."""
+    """tf2onnx in its own process, then `canonical`: tf2onnx's folded-constant names and node
+    order change from run to run (set and dict order). Returns the file's SHA-256."""
     env = os.environ | {"PYTHONHASHSEED": "0"}
     subprocess.run(
         [sys.executable, "-m", "tf2onnx.convert", "--tflite", str(source), "--opset", str(OPSET),
          "--output", str(target)],
         env=env, check=True, capture_output=True,
     )
+    model = canonical(onnx.load(str(target)))
+    onnx.save(model, str(target))
     return sha256(target)
+
+
+def canonical(model: onnx.ModelProto) -> onnx.ModelProto:
+    """The same graph with names and order that depend only on its structure: nodes in a
+    topological order that breaks ties by (op, attributes, inputs; a weight by its contents),
+    values and weights renamed in that order. Graph inputs and outputs keep their names;
+    weights no node uses are dropped."""
+    graph = model.graph
+    keep = {v.name for v in graph.input} | {v.name for v in graph.output}
+    weights = {t.name: t for t in graph.initializer}
+    producers = {out for node in graph.node for out in node.output}
+    names = {name: name for name in keep if name not in producers}
+
+    def contents(tensor) -> str:
+        copy = onnx.TensorProto()
+        copy.CopyFrom(tensor)
+        copy.name = ""
+        return "W" + hashlib.sha256(copy.SerializeToString(deterministic=True)).hexdigest()
+
+    digests = {name: contents(t) for name, t in weights.items()}
+
+    def key(node) -> tuple:
+        attrs = tuple(a.SerializeToString(deterministic=True) for a in node.attribute)
+        inputs = tuple(names.get(i) or digests.get(i, "") for i in node.input)
+        return (node.op_type, attrs, inputs)
+
+    pending, ordered, weight_count = list(graph.node), [], 0
+    while pending:
+        ready = [n for n in pending if all(i == "" or i not in producers or i in names for i in n.input)]
+        if not ready:
+            sys.exit("canonical: the graph has a cycle")
+        node = min(ready, key=key)
+        pending.remove(node)
+        for i in node.input:
+            if i in weights and i not in names:
+                names[i] = f"w{weight_count}"
+                weight_count += 1
+        for k, out in enumerate(node.output):
+            names[out] = out if out in keep else f"t{len(ordered)}_{k}"
+        ordered.append(node)
+
+    for index, node in enumerate(ordered):
+        node.name = f"n{index}_{node.op_type}"
+        node.doc_string = ""
+        node.input[:] = [names[i] if i else "" for i in node.input]
+        node.output[:] = [names[o] for o in node.output]
+    del graph.node[:]
+    graph.node.extend(ordered)
+    used = sorted((t for t in weights.values() if t.name in names), key=lambda t: int(names[t.name][1:]))
+    for tensor in used:
+        tensor.name = names[tensor.name]
+    del graph.initializer[:]
+    graph.initializer.extend(used)
+    del graph.value_info[:]
+    graph.doc_string = ""
+    model.doc_string = ""
+    graph.name = "blazeface_full_range"
+    return model
 
 
 def release_files(out: Path, target: Path, facts: dict) -> list[Path]:
