@@ -53,7 +53,10 @@ export const openVideo = (path: string) => invoke<Project>("open_video", { path 
 export const openProject = (id: string) => invoke<Project>("open_project", { id });
 export const saveProject = (project: Project) => invoke<Project>("save_project", { project });
 export const locateVideo = (id: string, path: string) => invoke<Project>("locate_video", { id, path });
+/** Deletes the project (never its video); its transcript is kept for the same video. */
 export const removeProject = (id: string) => invoke<void>("remove_project", { id });
+/** Deletes the project's transcript ("Transcribe again"); its clips stay. */
+export const discardTranscript = (id: string) => invoke<void>("discard_transcript", { id });
 export const projectThumbnail = (id: string) => invoke<string>("project_thumbnail", { id });
 
 export function isVideoPath(path: string): boolean {

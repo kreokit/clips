@@ -1,12 +1,13 @@
 import { useCallback, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RotateCcw, Trash2 } from "lucide-react";
 import { applyScores, forgetSpokenText, scoreClips } from "../lib/clips";
-import { describeShape, fileName, formatBytes, formatDuration, formatFps } from "../lib/projects";
-import { closeProject, useProject } from "../store/project";
+import { describeShape, discardTranscript, fileName, formatBytes, formatDuration, formatFps } from "../lib/projects";
+import { closeProject, deleteOpenProject, useProject } from "../store/project";
 import { Transcript, cancelJob, normalized } from "../lib/transcription";
-import { Button, Dialog, Tabs, TextInput, toast } from "../ui";
+import { Button, Dialog, MenuEntry, Tabs, TextInput, toast } from "../ui";
 import { ClipEditor } from "./ClipEditor";
 import { ClipsBoard } from "./ClipsBoard";
+import { DeleteProjectDialog } from "./Home";
 import { Thumbnail } from "./Thumbnail";
 import { TranscribePanel } from "./TranscribePanel";
 import { TopBar } from "./TopBar";
@@ -41,6 +42,9 @@ export function ProjectView() {
   const [tab, setTab] = useState<Tab>("clips");
   // The clip being edited, and the board's order for previous / next.
   const [editing, setEditing] = useState<{ id: number; order: number[] } | null>(null);
+  const [confirm, setConfirm] = useState<"delete" | "transcribe" | null>(null);
+  // A new key remounts the Transcribe panel, so it reads the (now missing) transcript.
+  const [panelKey, setPanelKey] = useState(0);
   const onRunningChange = useCallback((r: boolean) => setRunning(r), []);
   const onTranscript = useCallback((t: Transcript | null, fresh: boolean) => {
     setTranscript(t);
@@ -63,6 +67,35 @@ export function ProjectView() {
     await cancelJob();
     void closeProject();
   };
+  const projectItems: MenuEntry[] = [
+    {
+      label: "Transcribe again…",
+      icon: RotateCcw,
+      disabled: running || transcript === null,
+      onSelect: () => setConfirm("transcribe"),
+    },
+    { label: "Delete project…", icon: Trash2, danger: true, disabled: running, onSelect: () => setConfirm("delete") },
+  ];
+  const remove = async () => {
+    setConfirm(null);
+    try {
+      await deleteOpenProject();
+    } catch (e) {
+      toast(`Couldn't delete the project: ${String(e)}`, "error");
+    }
+  };
+  const transcribeAgain = async () => {
+    setConfirm(null);
+    try {
+      await discardTranscript(project.id);
+    } catch (e) {
+      return toast(`Couldn't remove the transcript: ${String(e)}`, "error");
+    }
+    forgetSpokenText(project.id);
+    setEditing(null);
+    setTranscript(null);
+    setPanelKey((k) => k + 1);
+  };
 
   return (
     <div className="screen">
@@ -78,6 +111,7 @@ export function ProjectView() {
           </>
         }
         onHome={home}
+        projectItems={projectItems}
       />
       {board && editing && (
         <ClipEditor
@@ -134,9 +168,32 @@ export function ProjectView() {
               </dl>
             </div>
           </div>
-          <TranscribePanel project={project} onRunningChange={onRunningChange} onTranscript={onTranscript} />
+          <TranscribePanel key={panelKey} project={project} onRunningChange={onRunningChange} onTranscript={onTranscript} />
         </div>
       </main>
+      {confirm === "delete" && <DeleteProjectDialog name={project.name} onCancel={() => setConfirm(null)} onDelete={() => void remove()} />}
+      {confirm === "transcribe" && (
+        <Dialog
+          title="Transcribe this video again?"
+          onClose={() => setConfirm(null)}
+          width={440}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirm(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={() => void transcribeAgain()}>
+                Transcribe again
+              </Button>
+            </>
+          }
+        >
+          <p className="dialog-text">
+            The current transcript is deleted and you can choose the settings for a new one. Your clips stay; they're scored again
+            when the new transcript is done.
+          </p>
+        </Dialog>
+      )}
       {confirmLeave && (
         <Dialog
           title="Stop transcribing?"

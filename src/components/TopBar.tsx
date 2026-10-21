@@ -30,14 +30,18 @@ export async function chooseVideo() {
 export function TopBar({
   title,
   onHome,
+  projectItems,
   children,
 }: {
   title: React.ReactNode;
+  /** The open project's actions, first in the menu. */
+  projectItems?: MenuEntry[];
   /** Adds "Back to Home" to the menu. */
   onHome?: () => void;
   children?: React.ReactNode;
 }) {
   const items: MenuEntry[] = [
+    ...(projectItems ? [...projectItems, "separator" as const] : []),
     { label: "Open video…", icon: FolderOpen, shortcut: "⌘O", onSelect: () => void chooseVideo() },
     ...(onHome ? [{ label: "Back to Home", icon: House, onSelect: onHome }] : []),
     "separator",

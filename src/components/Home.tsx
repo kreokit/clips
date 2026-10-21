@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { FolderOpen, FolderSearch, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { Ellipsis, FolderOpen, FolderSearch, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { ProjectEntry, formatDuration, isVideoPath, listProjects, relativeTime, removeProject } from "../lib/projects";
 import { locateAndOpen, openProject, openVideoPath } from "../store/project";
-import { Button, Dialog, MenuEntry, toast, useContextMenu } from "../ui";
+import { Button, Dialog, Menu, MenuEntry, toast, useContextMenu } from "../ui";
 import { Thumbnail } from "./Thumbnail";
 import { TopBar, pickVideo } from "./TopBar";
 import "../styles/home.css";
@@ -112,7 +112,7 @@ export function Home() {
                   disabled={busy}
                   onOpen={() => void run(() => openProject(entry.id))}
                   onLocate={() => void locate(entry)}
-                  onRemove={() => setRemoving(entry)}
+                  onDelete={() => setRemoving(entry)}
                 />
               ))}
             </div>
@@ -120,28 +120,34 @@ export function Home() {
         </section>
       </main>
 
-      {removing && (
-        <Dialog
-          title="Remove this project?"
-          onClose={() => setRemoving(null)}
-          width={440}
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setRemoving(null)}>
-                Cancel
-              </Button>
-              <Button variant="danger" onClick={() => void confirmRemove()}>
-                Remove project
-              </Button>
-            </>
-          }
-        >
-          <p className="dialog-text">
-            “{removing.name}” and its clips are removed from KreoKit Clips. The video file stays where it is.
-          </p>
-        </Dialog>
-      )}
+      {removing && <DeleteProjectDialog name={removing.name} onCancel={() => setRemoving(null)} onDelete={() => void confirmRemove()} />}
     </div>
+  );
+}
+
+/** "Delete this project?", on Home and in the project's menu. */
+export function DeleteProjectDialog({ name, onCancel, onDelete }: { name: string; onCancel: () => void; onDelete: () => void }) {
+  return (
+    <Dialog
+      title="Delete this project?"
+      onClose={onCancel}
+      width={440}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="danger" icon={Trash2} onClick={onDelete}>
+            Delete project
+          </Button>
+        </>
+      }
+    >
+      <p className="dialog-text">Your video file is not touched.</p>
+      <p className="dialog-text">
+        “{name}” and its clips are deleted. Its transcript is kept, so opening the video again doesn't transcribe it again.
+      </p>
+    </Dialog>
   );
 }
 
@@ -150,26 +156,24 @@ function ProjectCard({
   disabled,
   onOpen,
   onLocate,
-  onRemove,
+  onDelete,
 }: {
   entry: ProjectEntry;
   disabled: boolean;
   onOpen: () => void;
   onLocate: () => void;
-  onRemove: () => void;
+  onDelete: () => void;
 }) {
-  const { onContextMenu, menu } = useContextMenu(
-    (): MenuEntry[] => [
-      entry.video_exists
-        ? { label: "Open", icon: FolderOpen, onSelect: onOpen }
-        : { label: "Locate video…", icon: FolderSearch, onSelect: onLocate },
-      "separator",
-      { label: "Remove project…", icon: Trash2, onSelect: onRemove },
-    ],
-    "Project actions",
-  );
+  const items = (): MenuEntry[] => [
+    entry.video_exists
+      ? { label: "Open", icon: FolderOpen, onSelect: onOpen }
+      : { label: "Locate video…", icon: FolderSearch, onSelect: onLocate },
+    "separator",
+    { label: "Delete project…", icon: Trash2, danger: true, onSelect: onDelete },
+  ];
+  const { onContextMenu, menu } = useContextMenu(items, "Project actions");
   return (
-    <>
+    <div className="recent-item">
       <button
         type="button"
         className={entry.video_exists ? "recent-card" : "recent-card missing"}
@@ -192,7 +196,15 @@ function ProjectCard({
           )}
         </span>
       </button>
+      <Menu
+        buttonLabel={`Actions for “${entry.name}”`}
+        icon={Ellipsis}
+        variant="secondary"
+        align="end"
+        items={items()}
+        className="recent-more"
+      />
       {menu}
-    </>
+    </div>
   );
 }

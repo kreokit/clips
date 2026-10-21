@@ -103,6 +103,23 @@
   gap: var(--space-3);
 }
 
+/* A card plus its ⋯ menu button, over the thumbnail's corner. */
+.recent-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.recent-item .recent-card {
+  flex: 1;
+}
+
+.recent-more {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+}
+
 .recent-card {
   display: flex;
   flex-direction: column;

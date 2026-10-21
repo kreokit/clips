@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createAutosave } from "../lib/autosave";
-import { Project, locateVideo, openVideo, saveProject, openProject as openProjectById } from "../lib/projects";
+import { Project, locateVideo, openVideo, removeProject, saveProject, openProject as openProjectById } from "../lib/projects";
 import { toast } from "../ui";
 
 /** How long edits wait before they're saved (CLAUDE.md "Projects": auto-saved, no Save dialog). */
@@ -64,3 +64,14 @@ export async function closeProject() {
 
 /** Forgets edits that weren't saved yet, e.g. when the open project is removed. */
 export const discardPendingSave = () => autosave.cancel();
+
+/** Deletes the open project (never its video) and goes Home. */
+export async function deleteOpenProject() {
+  const project = useProject.getState().project;
+  if (!project) return;
+  autosave.cancel();
+  // A save already under way finishes first, so it can't bring the folder back.
+  await autosave.flush();
+  await removeProject(project.id);
+  useProject.setState({ project: null });
+}
