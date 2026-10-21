@@ -249,6 +249,23 @@ pub fn shift_clips(root: &Path, project: Project, ms: u64) -> Result<Project, St
     Ok(project)
 }
 
+/// Removes other projects of the same video that hold nothing (no clips, no transcript),
+/// left by earlier versions that made a new project whenever the file's time changed.
+fn remove_empty_duplicates(root: &Path, project: &Project, others: &[Project]) {
+    for p in others {
+        let Ok(dir) = project_dir(root, &p.id) else {
+            continue;
+        };
+        if p.id != project.id
+            && p.video_path == project.video_path
+            && p.clips.is_empty()
+            && !dir.join("transcript").exists()
+        {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+}
+
 /// Every readable project, most recently opened first. Damaged folders are skipped.
 fn all(root: &Path) -> Vec<Project> {
     let mut projects: Vec<Project> = fs::read_dir(root)
@@ -283,17 +300,41 @@ pub fn open_video(
     let (size, mtime) = fingerprint(Path::new(&video_path))?;
     let id = project_id(&video_path, size, mtime);
 
-    let existing = load(root, &id).ok().or_else(|| {
-        all(root).into_iter().find(|p| {
-            p.video_path == video_path && p.video_size == size && p.video_mtime_ms == mtime
+    // Its project; else the project of the same file that has changed since (rewritten,
+    // re-exported, touched), which is refreshed rather than duplicated. Its transcript
+    // is checked against the new size and time when it is used.
+    let same_file = |p: &Project| p.video_size == size && p.video_mtime_ms == mtime;
+    let others = all(root);
+    let existing = load(root, &id)
+        .ok()
+        .or_else(|| {
+            others
+                .iter()
+                .find(|p| p.video_path == video_path && same_file(p))
+                .cloned()
         })
-    });
+        .or_else(|| others.iter().find(|p| p.video_path == video_path).cloned());
     if let Some(project) = existing {
+        let project = if same_file(&project) {
+            project
+        } else {
+            let info = probe(Path::new(&video_path))?;
+            if !info.has_audio {
+                return Err("This video has no sound, so there is nothing to transcribe.".into());
+            }
+            Project {
+                video_size: size,
+                video_mtime_ms: mtime,
+                video: info,
+                ..project
+            }
+        };
         let project = Project {
             opened_at: now,
             ..project
         };
         write_project(&project_dir(root, &project.id)?, &project)?;
+        remove_empty_duplicates(root, &project, &others);
         return Ok(project);
     }
 
@@ -481,6 +522,10 @@ mod tests {
         Ok(info(600_000, true))
     }
 
+    fn probe_never(_: &Path) -> Result<VideoInfo, String> {
+        panic!("probed again")
+    }
+
     #[test]
     fn creates_a_project_on_first_import() {
         let (root, video) = setup("create");
@@ -491,6 +536,88 @@ mod tests {
         assert_eq!(p.video, info(600_000, true));
         assert!(root.join(&p.id).join(PROJECT_FILE).is_file());
         assert_eq!(load(&root, &p.id).unwrap(), p);
+    }
+
+    fn touch(path: &Path, secs: u64) {
+        let file = fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_changed_file_reopens_its_project_instead_of_a_second_one() {
+        let (root, video) = setup("changed");
+        touch(&video, 1_000_000);
+        let first = open_video(&root, &video, probe_ok, 1).unwrap();
+        let first = Project {
+            clips: vec![Clip {
+                id: 1,
+                in_ms: 0,
+                out_ms: 30_000,
+                status: ClipStatus::Kept,
+                source: ClipSource::Manual,
+                edited: false,
+                moment: None,
+            }],
+            ..first
+        };
+        save(&root, &first, 2).unwrap();
+        // Rewritten (e.g. exported again): new time and size, same path.
+        fs::write(&video, b"a longer, re-exported video").unwrap();
+        touch(&video, 2_000_000);
+        let longer = |_: &Path| Ok(info(700_000, true));
+        let again = open_video(&root, &video, longer, 3).unwrap();
+        assert_eq!(again.id, first.id);
+        assert_eq!(again.clips, first.clips);
+        assert_eq!(again.video.duration_ms, 700_000);
+        assert_eq!(again.video_mtime_ms, 2_000_000_000);
+        assert_eq!(list(&root).len(), 1);
+        // Once refreshed, it opens without probing.
+        assert_eq!(
+            open_video(&root, &video, probe_never, 4).unwrap().id,
+            first.id
+        );
+    }
+
+    #[test]
+    fn empty_duplicates_from_older_versions_are_cleaned_up() {
+        let (root, video) = setup("duplicates");
+        touch(&video, 1_000_000);
+        let old = open_video(&root, &video, probe_ok, 1).unwrap();
+        // What earlier versions did when the file's time changed: a second project.
+        touch(&video, 2_000_000);
+        let (size, mtime) = fingerprint(&video).unwrap();
+        let path = normalize(&video);
+        let newer = Project {
+            id: project_id(&path, size, mtime),
+            video_mtime_ms: mtime,
+            opened_at: 2,
+            ..old.clone()
+        };
+        write_project(&root.join(&newer.id), &newer).unwrap();
+        // A third, older one with clips stays (its clips are the user's work).
+        let kept = Project {
+            id: "00000000000000aa".into(),
+            opened_at: 0,
+            clips: vec![Clip {
+                id: 1,
+                in_ms: 0,
+                out_ms: 30_000,
+                status: ClipStatus::Kept,
+                source: ClipSource::Manual,
+                edited: false,
+                moment: None,
+            }],
+            ..old.clone()
+        };
+        write_project(&root.join(&kept.id), &kept).unwrap();
+        assert_eq!(list(&root).len(), 3);
+
+        let opened = open_video(&root, &video, probe_never, 3).unwrap();
+        assert_eq!(opened.id, newer.id);
+        let mut ids: Vec<_> = list(&root).into_iter().map(|e| e.project.id).collect();
+        ids.sort();
+        assert_eq!(ids, [kept.id.clone(), newer.id.clone()]);
     }
 
     #[test]
