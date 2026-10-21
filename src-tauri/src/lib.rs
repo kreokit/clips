@@ -1,19 +1,17 @@
 //! KreoKit Clips: long video → vertical short clips with captions, offline.
 
 mod analysis;
-#[cfg_attr(not(test), allow(dead_code))] // the caption export (M5 step 5)
 mod ass;
 mod audio;
 mod awake;
+mod batch;
 mod captions;
 mod chunks;
 mod cpu;
-#[cfg_attr(not(test), allow(dead_code))] // the export job (M5 step 5)
 mod export;
 mod faces;
 mod ffmpeg;
 mod frames;
-#[cfg_attr(not(test), allow(dead_code))] // the caption export (M5 step 5)
 mod layout;
 mod models;
 mod moments;
@@ -21,8 +19,8 @@ mod probe;
 mod projects;
 mod reframe;
 mod sentences;
-#[cfg_attr(not(test), allow(dead_code))] // the caption export (M5 step 5)
 mod style;
+mod subtitles;
 mod tracks;
 mod transcribe;
 mod transcription;
@@ -55,6 +53,13 @@ struct Busy(Arc<AtomicBool>);
 /// and its own Cancel.
 #[derive(Default)]
 struct FacesJob {
+    running: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+}
+
+/// Export all (one at a time): whether it runs, and its Stop flag.
+#[derive(Default)]
+struct ExportJob {
     running: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
 }
@@ -427,6 +432,163 @@ fn cancel_faces(faces: State<'_, FacesJob>) {
     faces.cancel.store(true, Ordering::SeqCst);
 }
 
+/// The bundled caption fonts (tauri.conf.json `bundle.resources`); in debug builds also
+/// the source folder, in case the resources haven't been copied yet.
+fn caption_fonts_dir(app: &AppHandle) -> Option<PathBuf> {
+    let bundled = app
+        .path()
+        .resolve("fonts", tauri::path::BaseDirectory::Resource)
+        .ok()
+        .filter(|p| p.is_dir());
+    bundled.or_else(|| {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/fonts");
+        (cfg!(debug_assertions) && source.is_dir()).then_some(source)
+    })
+}
+
+/// What Export all would do: file names, files already there, size and free space.
+#[tauri::command]
+async fn export_plan(
+    app: AppHandle,
+    id: String,
+    folder: String,
+    items: Vec<(u32, u64)>,
+    srt: bool,
+) -> Result<batch::Plan, String> {
+    let root = projects_root(&app)?;
+    blocking(move || {
+        let project = projects::load(&root, &id)?;
+        Ok(batch::plan(Path::new(&folder), &project.name, &items, srt))
+    })
+    .await
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ExportProgress {
+    /// The clip being exported (0-based) of `total`, and its progress 0–100.
+    index: usize,
+    total: usize,
+    percent: u32,
+}
+
+/// Exports `items` into `folder`, one after the other (`export-progress` events). A clip
+/// that fails is reported and the next one goes on; Stop skips the rest.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_clips(
+    app: AppHandle,
+    busy: State<'_, Busy>,
+    job: State<'_, ExportJob>,
+    id: String,
+    settings: Settings,
+    folder: String,
+    items: Vec<batch::Item>,
+    srt: bool,
+    replace: bool,
+) -> Result<Vec<batch::ItemResult>, String> {
+    if busy.0.load(Ordering::SeqCst) {
+        return Err("Wait for the transcription to finish.".into());
+    }
+    if job.running.swap(true, Ordering::SeqCst) {
+        return Err("An export is already running.".into());
+    }
+    let running = job.running.clone();
+    let cancel = job.cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+    let fonts = caption_fonts_dir(&app);
+    let result = blocking(move || {
+        let (project, output) = finished(&app, &id, &settings)?;
+        let text = sentences::split(&output.transcript);
+        let _awake = awake::KeepAwake::new("exporting clips");
+        let tiktok = project.finder.platform == Some(moments::Platform::TiktokRewards);
+        let largest = items.iter().map(|i| i.number).max().unwrap_or(1);
+        let folder = PathBuf::from(&folder);
+        let batch = batch::Batch {
+            video: Path::new(&project.video_path),
+            info: &project.video,
+            video_name: &project.name,
+            text: &text,
+            fixes: &project.word_fixes,
+            folder: &folder,
+            largest_number: largest,
+            srt,
+            replace,
+            tiktok,
+            fonts: fonts.as_deref(),
+        };
+        let total = items.len();
+        let mut results = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            if cancel.load(Ordering::SeqCst) {
+                results.push(batch::ItemResult::Skipped {
+                    clip_id: item.clip_id,
+                });
+                continue;
+            }
+            let emitter = app.clone();
+            let _ = emitter.emit(
+                "export-progress",
+                ExportProgress {
+                    index,
+                    total,
+                    percent: 0,
+                },
+            );
+            let result = batch::export_one(&batch, item, &cancel, |percent| {
+                let _ = emitter.emit(
+                    "export-progress",
+                    ExportProgress {
+                        index,
+                        total,
+                        percent,
+                    },
+                );
+            });
+            results.push(match result {
+                Ok((path, srt)) => batch::ItemResult::Saved {
+                    clip_id: item.clip_id,
+                    path: path.to_string_lossy().into_owned(),
+                    srt: srt.map(|p| p.to_string_lossy().into_owned()),
+                },
+                Err(e) if e == models::CANCELLED => batch::ItemResult::Skipped {
+                    clip_id: item.clip_id,
+                },
+                Err(error) => batch::ItemResult::Failed {
+                    clip_id: item.clip_id,
+                    error,
+                },
+            });
+        }
+        Ok(results)
+    })
+    .await;
+    running.store(false, Ordering::SeqCst);
+    result
+}
+
+/// Stops Export all: the clip being written is dropped, the rest skipped.
+#[tauri::command]
+fn cancel_export(job: State<'_, ExportJob>) {
+    job.cancel.store(true, Ordering::SeqCst);
+}
+
+/// Shows an exported clip in the file manager (only .mp4 / .srt files).
+#[tauri::command]
+fn reveal_export(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = PathBuf::from(path);
+    let exported = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_lowercase().as_str(), "mp4" | "srt"));
+    if !exported || !path.is_file() {
+        return Err("not an exported clip".into());
+    }
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
+}
+
 /// The automatic crop path for a clip, or `None` until its faces are analysed.
 #[tauri::command]
 async fn reframe_path(
@@ -679,6 +841,7 @@ pub fn run() {
         .manage(CancelFlag::default())
         .manage(Busy::default())
         .manage(FacesJob::default())
+        .manage(ExportJob::default())
         .invoke_handler(tauri::generate_handler![
             probe_video,
             list_projects,
@@ -700,6 +863,10 @@ pub fn run() {
             cancel_faces,
             reframe_path,
             clip_faces,
+            export_plan,
+            export_clips,
+            cancel_export,
+            reveal_export,
             transcript_text,
             clip_captions,
             find_moments,
@@ -718,6 +885,9 @@ pub fn run() {
             // Quitting stops the jobs, so their FFmpeg processes end with the app.
             if let tauri::RunEvent::Exit = event {
                 app.state::<FacesJob>().cancel.store(true, Ordering::SeqCst);
+                app.state::<ExportJob>()
+                    .cancel
+                    .store(true, Ordering::SeqCst);
                 app.state::<CancelFlag>().0.store(true, Ordering::SeqCst);
             }
         });

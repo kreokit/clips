@@ -33,6 +33,10 @@ whisper-rs = "0.16.0"
 # The same version whisper-rs uses; for reading finished segments while Whisper runs.
 whisper-rs-sys = "0.15.0"
 
+# Free disk space before Export all (statvfs); already in the tree through other crates.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"
+
 [profile.dev]
 opt-level = 1
 
