@@ -27,3 +27,15 @@ otherwise unchanged.
 | `faces/studio-wide-small-faces.jpg` | two small faces in a wide studio shot | cottonbro studio | <https://www.pexels.com/photo/a-man-and-woman-talking-together-6883805/> |
 | `faces/podcast-two-close.jpg` | two people at microphones, faces turned | George Milton | <https://www.pexels.com/photo/positive-black-woman-talking-to-radio-host-6954162/> |
 | `faces/podcast-two-wide.jpg` | the same set, wider, smaller faces | George Milton | <https://www.pexels.com/photo/multiethnic-women-talking-in-broadcasting-studio-6953672/> |
+
+## Reframe videos (`reframe/`)
+
+Made by `scripts/make_reframe_fixtures.py` (FFmpeg, libx264 for the test files only; they
+are never bundled). Every file has a silent mono AAC track so the app can import it.
+
+| File | Source | Licence |
+|---|---|---|
+| `reframe/moving-face.mp4`, `.json` | Synthetic: `faces/portrait-frontal.jpg` and `faces/portrait-glasses.jpg` moved along scripted paths over blurred, face-free crops of `faces/podcast-two-wide.jpg` and `faces/studio-wide-small-faces.jpg`; the `.json` holds the true face boxes | Pexels License (the photos above); our arrangement MIT OR Apache-2.0 |
+| `reframe/two-faces.mp4`, `.json` | Synthetic, the same way, from the two faces of `faces/podcast-two-close.jpg` | Pexels License (the photos above); our arrangement MIT OR Apache-2.0 |
+| `reframe/podcast-wide.mp4` | "Professional podcast interview in studio setting" by Mihaela Claudia Puscas, <https://www.pexels.com/video/professional-podcast-interview-in-studio-setting-37874130/>, downloaded 2026-10-21; 0:10–0:30, scaled to 640×360 (the original has no sound) | [Pexels License](https://www.pexels.com/license/) |
+| `reframe/talking-head.mp4` | "Professional podcast interview in modern studio" by Mihaela Claudia Puscas, <https://www.pexels.com/video/professional-podcast-interview-in-modern-studio-38630316/>, downloaded 2026-10-21; 0:00–0:12, scaled to 640×360 (the original has no sound) | [Pexels License](https://www.pexels.com/license/) |

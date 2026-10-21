@@ -429,12 +429,12 @@ pub(crate) mod tests {
     pub(crate) fn face_model() -> PathBuf {
         static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
         PATH.get_or_init(|| {
-            let dir =
-                if cfg!(target_os = "macos") || std::env::var_os("KREOKIT_APP_DATA").is_some() {
-                    models::tests::dev_dirs().ours
-                } else {
-                    std::env::temp_dir().join("kreokit-clips-face-model")
-                };
+            let dir = if cfg!(target_os = "macos") || std::env::var_os("KREOKIT_APP_DATA").is_some()
+            {
+                models::tests::dev_dirs().ours
+            } else {
+                std::env::temp_dir().join("kreokit-clips-face-model")
+            };
             models::download(FACE_MODEL, &dir, &AtomicBool::new(false), |_| {}).unwrap()
         })
         .clone()
@@ -812,6 +812,120 @@ pub(crate) mod tests {
             if percent >= 8.0 {
                 assert_eq!(tiled, total, "with tiles, {percent}%");
             }
+        }
+    }
+
+    #[derive(Deserialize)]
+    pub(crate) struct Truth {
+        pub samples: Vec<TruthSample>,
+    }
+
+    #[derive(Deserialize)]
+    pub(crate) struct TruthSample {
+        pub t_ms: u64,
+        pub faces: Vec<TruthFace>,
+    }
+
+    #[derive(Deserialize)]
+    pub(crate) struct TruthFace {
+        pub id: String,
+        #[serde(rename = "box")]
+        pub bbox: [f32; 4],
+    }
+
+    pub(crate) fn reframe_fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/reframe")
+            .join(name)
+    }
+
+    /// Every sample of a fixture video with the faces found in it.
+    pub(crate) fn detect_video(name: &str) -> Vec<(u64, Vec<Face>)> {
+        let video = reframe_fixture(name);
+        let info = crate::probe::probe_video(&video).unwrap();
+        let mut detector = Detector::load(&face_model()).unwrap();
+        let mut found = Vec::new();
+        crate::frames::sample(
+            &video,
+            (info.width, info.height),
+            0,
+            info.duration_ms,
+            &AtomicBool::new(false),
+            |t, frame| {
+                found.push((t, detector.detect(frame)?));
+                Ok(())
+            },
+        )
+        .unwrap();
+        found
+    }
+
+    /// The synthetic fixtures' faces are found where the truth says, every sample:
+    /// `cargo test --release finds_the_synthetic_faces -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn finds_the_synthetic_faces() {
+        for name in ["moving-face", "two-faces"] {
+            let truth: Truth = serde_json::from_slice(
+                &std::fs::read(reframe_fixture(&format!("{name}.json"))).unwrap(),
+            )
+            .unwrap();
+            let found = detect_video(&format!("{name}.mp4"));
+            assert_eq!(found.len(), truth.samples.len(), "{name}");
+            let (mut hits, mut total, mut extra, mut worst) = (0, 0, 0, 1.0f32);
+            for ((t, faces), sample) in found.iter().zip(&truth.samples) {
+                assert_eq!(*t, sample.t_ms);
+                for want in &sample.faces {
+                    let [x0, y0, x1, y1] = want.bbox;
+                    let want = Face {
+                        score: 1.0,
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        keypoints: [[0.0; 2]; 6],
+                    };
+                    total += 1;
+                    let best = faces.iter().map(|f| iou(f, &want)).fold(0.0, f32::max);
+                    if best > 0.5 {
+                        hits += 1;
+                        worst = worst.min(best);
+                    } else {
+                        println!("{name} {t} ms: missed a face (best IoU {best:.2})");
+                    }
+                }
+                extra += faces.len().saturating_sub(sample.faces.len());
+            }
+            println!("{name}: {hits}/{total} faces found, worst IoU {worst:.2}, {extra} extra");
+            assert_eq!(hits, total, "{name}");
+            assert_eq!(extra, 0, "{name}");
+        }
+    }
+
+    /// What the detector sees in the real Pexels clips (no truth; prints a summary). Every
+    /// sample has a face. Measured 2026-10-21: podcast-wide (faces ~10% of the height,
+    /// turned sideways) finds both people in 45 of 80 samples and one in the rest (the
+    /// tiles run only when nothing is found); the tracker bridges the gaps.
+    /// `cargo test --release real_clip_faces -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_clip_faces() {
+        for name in ["podcast-wide.mp4", "talking-head.mp4"] {
+            let found = detect_video(name);
+            let mut counts = [0usize; 4];
+            for (_, faces) in &found {
+                counts[faces.len().min(3)] += 1;
+            }
+            let heights: Vec<f32> = found
+                .iter()
+                .flat_map(|(_, faces)| faces.iter().map(|f| f.height() / 360.0 * 100.0))
+                .collect();
+            let mean = heights.iter().sum::<f32>() / heights.len().max(1) as f32;
+            println!(
+                "{name}: {} samples; 0/1/2/3+ faces: {counts:?}; mean face height {mean:.1}% of the frame",
+                found.len()
+            );
+            assert_eq!(counts[0], 0, "{name}: samples without a face");
         }
     }
 
