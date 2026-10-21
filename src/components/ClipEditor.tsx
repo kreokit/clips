@@ -147,14 +147,18 @@ export function ClipEditor({
       setPlaying(false);
       tick();
     };
+    // Right after loading, WebKit fires "seeked" while the time still reads 0 and then
+    // settles on the position set earlier without another event: read it again once the
+    // first frame is there.
+    const settled = ["seeked", "loadeddata", "canplay"];
     el.addEventListener("play", onPlay);
     el.addEventListener("pause", onPause);
-    el.addEventListener("seeked", tick);
+    settled.forEach((type) => el.addEventListener(type, tick));
     return () => {
       cancelAnimationFrame(raf);
       el.removeEventListener("play", onPlay);
       el.removeEventListener("pause", onPause);
-      el.removeEventListener("seeked", tick);
+      settled.forEach((type) => el.removeEventListener(type, tick));
     };
   }, []);
 
