@@ -18,6 +18,7 @@ mod moments;
 mod probe;
 mod projects;
 mod reframe;
+mod selftest;
 mod sentences;
 mod style;
 mod subtitles;
@@ -26,8 +27,6 @@ mod transcribe;
 mod transcription;
 mod vad;
 mod waveform;
-// Accuracy checks; tests only until the release self-test (milestone 6) uses it.
-#[cfg(test)]
 mod wer;
 
 use std::path::{Path, PathBuf};
@@ -781,6 +780,12 @@ async fn score_clips(
         ))
     })
     .await
+}
+
+/// The hidden `--self-test` mode for release CI (see `selftest.rs`). `args` excludes the
+/// program name; returns `None` when the app should start normally.
+pub fn self_test(args: &[String]) -> Option<std::process::ExitCode> {
+    selftest::run_if_requested(args)
 }
 
 #[tauri::command]

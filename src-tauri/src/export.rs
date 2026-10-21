@@ -723,7 +723,6 @@ pub fn check(
 /// with a caption exported with the **release** encoders (never libx264), read back with
 /// ffprobe and checked like every export (the encoder's profiles, yuv420p, faststart,
 /// BT.709, 48 kHz, lengths). Returns a one-line summary naming the encoder.
-#[cfg_attr(not(test), allow(dead_code))] // `--self-test` (milestone 6)
 pub fn self_check(work_dir: &Path, fonts: Option<&Path>) -> Result<String, String> {
     use crate::style::{Segment, Style, Word};
     fs::create_dir_all(work_dir)

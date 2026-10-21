@@ -151,7 +151,7 @@ pub fn now_ms() -> u64 {
 }
 
 /// Size and modification time (Unix ms) of the file at `path`.
-fn fingerprint(path: &Path) -> Result<(u64, u64), String> {
+pub fn fingerprint(path: &Path) -> Result<(u64, u64), String> {
     let meta = fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let mtime = meta
         .modified()

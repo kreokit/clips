@@ -110,7 +110,7 @@ make_long() {
 make_long
 
 # The self-test clip: moving-face's picture (copied, not re-encoded) and four sentences
-# from 1 s, padded with silence to the picture's 12 s.
+# from 1 s with pauses between them, padded with silence to the picture's 12 s.
 make_speaker() {
   local out="../selftest/speaker"
   if [[ -f "$out.mp4" && "$FORCE" != "--force" ]]; then
@@ -123,7 +123,8 @@ Then the picture cuts to someone new. The crop should follow them."
   echo "$text" > "$out.txt"
   local tmp
   tmp="$(mktemp -d)"
-  say -v "$VOICE" -o "$tmp/speech.aiff" "$text"
+  # 0.6 s between sentences, so Whisper ends them with full stops (not commas).
+  say -v "$VOICE" -o "$tmp/speech.aiff" "${text//. /. [[slnc 600]] }"
   ffmpeg -nostdin -y -v error \
     -i ../reframe/moving-face.mp4 -i "$tmp/speech.aiff" \
     -filter_complex "[1:a]adelay=1000:all=1,apad[a]" \
