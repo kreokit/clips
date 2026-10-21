@@ -4,7 +4,8 @@
 //! graph ([`video_graph`]) that ends in constant frame rate, yuv420p and BT.709 tags, with
 //! the captions drawn last by libass (`ass` filter, as in KreoKit Captions).
 //!
-//! **TikTok-ready** (decided 2026-10-21): H.264 High profile, yuv420p, BT.709 tags,
+//! **TikTok-ready** (decided 2026-10-21): H.264 High profile (Main or Constrained Baseline
+//! accepted where the encoder can't make High, [`accepted_profiles`]), yuv420p, BT.709 tags,
 //! `+faststart`, AAC at 48 kHz. Every file is written under a temporary name, checked with
 //! ffprobe ([`probe_output`], [`check`]: size, codecs, tags, durations, and over 60.0 s in
 //! every stream when the clip must be), and only then put in place ([`place`]), never over
@@ -620,10 +621,24 @@ fn moov_first(path: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
-/// What a finished clip must be: TikTok-ready, the clip's length in every stream (within
-/// a frame and an audio packet), and over 60.0 s in every stream when `over_a_minute`.
+/// The H.264 profiles accepted from `encoder` (decided 2026-10-21, user): High from
+/// VideoToolbox (and libx264 in dev builds); High or Main from Media Foundation; OpenH264
+/// (FFmpeg's wrapper may ignore `-profile high`) also Constrained Baseline. TikTok accepts
+/// all three; yuv420p and faststart are required whatever the encoder.
+pub fn accepted_profiles(encoder: &str) -> &'static [&'static str] {
+    match encoder {
+        "h264_mf" => &["High", "Main"],
+        "libopenh264" => &["High", "Main", "Constrained Baseline"],
+        _ => &["High"],
+    }
+}
+
+/// What a finished clip from `encoder` must be: TikTok-ready, the clip's length in every
+/// stream (within a frame and an audio packet), and over 60.0 s in every stream when
+/// `over_a_minute`.
 pub fn check(
     facts: &Facts,
+    encoder: &str,
     length_ms: u64,
     (rate_n, rate_d): (u32, u32),
     over_a_minute: bool,
@@ -643,8 +658,8 @@ pub fn check(
         format!("video codec {}", facts.video_codec),
     );
     expect(
-        facts.profile == "High",
-        format!("H.264 profile {}", facts.profile),
+        accepted_profiles(encoder).contains(&facts.profile.as_str()),
+        format!("H.264 profile {} from {encoder}", facts.profile),
     );
     expect(
         facts.pix_fmt == "yuv420p",
@@ -705,8 +720,8 @@ pub fn check(
 /// The export part of `--self-test` (milestone 6, decided 2026-10-21): a 3 s synthetic
 /// video (picture and 44.1 kHz sound) made with FFmpeg in `work_dir`, a 2 s clip of it
 /// with a caption exported with the **release** encoders (never libx264), read back with
-/// ffprobe and checked like every export (High profile, yuv420p, faststart, BT.709, 48 kHz,
-/// lengths). Returns a one-line summary naming the encoder.
+/// ffprobe and checked like every export (the encoder's profiles, yuv420p, faststart,
+/// BT.709, 48 kHz, lengths). Returns a one-line summary naming the encoder.
 #[cfg_attr(not(test), allow(dead_code))] // `--self-test` (milestone 6)
 pub fn self_check(work_dir: &Path, fonts: Option<&Path>) -> Result<String, String> {
     use crate::style::{Segment, Style, Word};
@@ -784,8 +799,14 @@ pub fn self_check(work_dir: &Path, fonts: Option<&Path>) -> Result<String, Strin
         |_| {},
     )?;
     let facts = probe_output(&out)?;
-    check(&facts, job.length_ms(), output_rate(info.fps), false)
-        .map_err(|e| format!("{encoder}: {e}"))?;
+    check(
+        &facts,
+        encoder,
+        job.length_ms(),
+        output_rate(info.fps),
+        false,
+    )
+    .map_err(|e| format!("{encoder}: {e}"))?;
     Ok(format!(
         "export: {encoder}, {}×{} H.264 {} {}, faststart, {} s",
         facts.width,
@@ -958,7 +979,10 @@ pub(crate) mod tests {
     #[test]
     fn checks_every_tiktok_requirement() {
         let rate = (30, 1);
-        assert_eq!(check(&good_facts(61_000), 61_000, rate, true), Ok(()));
+        assert_eq!(
+            check(&good_facts(61_000), "h264_videotoolbox", 61_000, rate, true),
+            Ok(())
+        );
         let bad = Facts {
             profile: "Constrained Baseline".into(),
             color_transfer: "unknown".into(),
@@ -966,7 +990,7 @@ pub(crate) mod tests {
             faststart: false,
             ..good_facts(61_000)
         };
-        let err = check(&bad, 61_000, rate, true).unwrap_err();
+        let err = check(&bad, "h264_videotoolbox", 61_000, rate, true).unwrap_err();
         for part in [
             "profile Constrained Baseline",
             "transfer unknown",
@@ -981,10 +1005,50 @@ pub(crate) mod tests {
             ..good_facts(61_000)
         };
         assert!(
-            check(&short, 61_000, rate, false)
+            check(&short, "h264_videotoolbox", 61_000, rate, false)
                 .unwrap_err()
                 .contains("picture lasts 60.900")
         );
+    }
+
+    /// Decided 2026-10-21 (user): High where the encoder makes it, Main also from Media
+    /// Foundation, Main or Constrained Baseline also from OpenH264; never another pixel
+    /// format or a file without faststart.
+    #[test]
+    fn the_accepted_profile_depends_on_the_encoder() {
+        let rate = (30, 1);
+        let with = |profile: &str| Facts {
+            profile: profile.into(),
+            ..good_facts(10_000)
+        };
+        let ok = |encoder: &str, profile: &str| check(&with(profile), encoder, 10_000, rate, false);
+        for encoder in ["h264_videotoolbox", "h264_mf", "libopenh264", "libx264"] {
+            assert_eq!(ok(encoder, "High"), Ok(()), "{encoder}");
+            assert!(ok(encoder, "High 10").is_err(), "{encoder}");
+        }
+        assert!(
+            ok("h264_videotoolbox", "Main")
+                .unwrap_err()
+                .contains("H.264 profile Main from h264_videotoolbox")
+        );
+        assert!(ok("libx264", "Main").is_err());
+        assert_eq!(ok("h264_mf", "Main"), Ok(()));
+        assert!(ok("h264_mf", "Constrained Baseline").is_err());
+        assert_eq!(ok("libopenh264", "Main"), Ok(()));
+        assert_eq!(ok("libopenh264", "Constrained Baseline"), Ok(()));
+        assert!(ok("libopenh264", "Baseline").is_err());
+        for encoder in ["h264_mf", "libopenh264"] {
+            let bad = Facts {
+                pix_fmt: "yuvj420p".into(),
+                faststart: false,
+                ..with("Main")
+            };
+            let err = check(&bad, encoder, 10_000, rate, false).unwrap_err();
+            assert!(
+                err.contains("pixel format yuvj420p") && err.contains("faststart"),
+                "{err}"
+            );
+        }
     }
 
     #[test]
@@ -992,7 +1056,7 @@ pub(crate) mod tests {
         let rate = (30, 1);
         // Exactly 60.0 s isn't over a minute; neither is 59.99 in one stream.
         assert!(
-            check(&good_facts(60_000), 60_000, rate, true)
+            check(&good_facts(60_000), "h264_videotoolbox", 60_000, rate, true)
                 .unwrap_err()
                 .contains("not over 60.0 s")
         );
@@ -1001,13 +1065,25 @@ pub(crate) mod tests {
             ..good_facts(60_010)
         };
         assert!(
-            check(&one_short, 60_010, rate, true)
+            check(&one_short, "h264_videotoolbox", 60_010, rate, true)
                 .unwrap_err()
                 .contains("sound lasts 59.990")
         );
-        assert_eq!(check(&good_facts(60_010), 60_010, rate, true), Ok(()));
+        assert_eq!(
+            check(&good_facts(60_010), "h264_videotoolbox", 60_010, rate, true),
+            Ok(())
+        );
         // Shorts don't need it.
-        assert_eq!(check(&good_facts(30_000), 30_000, rate, false), Ok(()));
+        assert_eq!(
+            check(
+                &good_facts(30_000),
+                "h264_videotoolbox",
+                30_000,
+                rate,
+                false
+            ),
+            Ok(())
+        );
     }
 
     #[test]
@@ -1033,6 +1109,7 @@ pub(crate) mod tests {
                     faststart: true,
                     ..facts
                 },
+                "h264_videotoolbox",
                 61_000,
                 (30, 1),
                 true
@@ -1201,7 +1278,7 @@ pub(crate) mod tests {
         in_ms: u64,
         out_ms: u64,
         ass: Option<&str>,
-    ) -> (PathBuf, Facts, (u32, u32)) {
+    ) -> (PathBuf, Facts, (u32, u32), &'static str) {
         let info = crate::probe::probe_video(video).unwrap();
         let keyframes = [];
         let job = ClipJob {
@@ -1219,11 +1296,11 @@ pub(crate) mod tests {
         };
         let out = dir.join(format!("clip-{in_ms}-{out_ms}.mp4"));
         let mut progress = Vec::new();
-        encode(&job, &out, &AtomicBool::new(false), |p| progress.push(p)).unwrap();
+        let encoder = encode(&job, &out, &AtomicBool::new(false), |p| progress.push(p)).unwrap();
         assert_eq!(progress.last(), Some(&100));
         let facts = probe_output(&out).unwrap();
-        println!("{}: {facts:?}", out.display());
-        (out, facts, output_rate(info.fps))
+        println!("{} ({encoder}): {facts:?}", out.display());
+        (out, facts, output_rate(info.fps), encoder)
     }
 
     /// When the sound first gets loud in `video`, in ms (48 kHz mono).
@@ -1263,10 +1340,10 @@ pub(crate) mod tests {
             words: words.to_vec(),
         };
         let ass = crate::ass::to_ass(&[caption], &crate::style::Style::default(), OUT.0, OUT.1);
-        let (_, facts, rate) = export(&dir, &video, 1_000, 8_000, Some(&ass));
-        assert_eq!(check(&facts, 7_000, rate, false), Ok(()));
+        let (_, facts, rate, enc) = export(&dir, &video, 1_000, 8_000, Some(&ass));
+        assert_eq!(check(&facts, enc, 7_000, rate, false), Ok(()));
         // Seven seconds is not over a minute.
-        assert!(check(&facts, 7_000, rate, true).is_err());
+        assert!(check(&facts, enc, 7_000, rate, true).is_err());
     }
 
     /// TikTok Rewards (decided 2026-10-21): a 61 s clip must come out over 60.0 s in every
@@ -1277,8 +1354,8 @@ pub(crate) mod tests {
         let dir = temp_dir("minute");
         for rate in ["30", "30000/1001", "25"] {
             let video = make_source(&dir, rate, 70.0, 70.0, 0.0);
-            let (_, facts, out_rate) = export(&dir, &video, 3_000, 64_000, None);
-            assert_eq!(check(&facts, 61_000, out_rate, true), Ok(()), "{rate}");
+            let (_, facts, out_rate, enc) = export(&dir, &video, 3_000, 64_000, None);
+            assert_eq!(check(&facts, enc, 61_000, out_rate, true), Ok(()), "{rate}");
             for ms in [facts.container_ms, facts.video_ms, facts.audio_ms] {
                 assert!(ms > 60_900, "{rate}: {facts:?}");
             }
@@ -1292,8 +1369,8 @@ pub(crate) mod tests {
         // The picture ends 300 ms before the sound.
         let video = make_source(&dir, "30", 11.7, 12.0, 0.0);
         let end = crate::probe::probe_video(&video).unwrap().duration_ms;
-        let (_, facts, rate) = export(&dir, &video, 500, end, None);
-        assert_eq!(check(&facts, end - 500, rate, false), Ok(()));
+        let (_, facts, rate, enc) = export(&dir, &video, 500, end, None);
+        assert_eq!(check(&facts, enc, end - 500, rate, false), Ok(()));
     }
 
     #[test]
@@ -1303,16 +1380,16 @@ pub(crate) mod tests {
         // The beep is 3.0 s into the sound, which starts 0.5 s after the picture: 3.5 s on
         // the video's clock (the transcript's and the player's).
         let video = make_source(&dir, "25", 10.0, 9.5, 0.5);
-        let (from_one, facts, rate) = export(&dir, &video, 1_000, 9_000, None);
-        assert_eq!(check(&facts, 8_000, rate, false), Ok(()));
+        let (from_one, facts, rate, enc) = export(&dir, &video, 1_000, 9_000, None);
+        assert_eq!(check(&facts, enc, 8_000, rate, false), Ok(()));
         assert!(
             beep_at(&from_one).abs_diff(2_500) <= 30,
             "{}",
             beep_at(&from_one)
         );
         // From 0:00 the clip starts with silence where the source has no sound yet.
-        let (from_zero, facts, rate) = export(&dir, &video, 0, 8_000, None);
-        assert_eq!(check(&facts, 8_000, rate, false), Ok(()));
+        let (from_zero, facts, rate, enc) = export(&dir, &video, 0, 8_000, None);
+        assert_eq!(check(&facts, enc, 8_000, rate, false), Ok(()));
         assert!(
             beep_at(&from_zero).abs_diff(3_500) <= 30,
             "{}",
@@ -1404,8 +1481,8 @@ pub(crate) mod tests {
                 }],
             };
             let ass = crate::ass::to_ass(&[segment], &style, OUT.0, OUT.1);
-            let (out, facts, rate) = export(&dir, &video, 0, 1_500, Some(&ass));
-            assert_eq!(check(&facts, 1_500, rate, false), Ok(()));
+            let (out, facts, rate, enc) = export(&dir, &video, 0, 1_500, Some(&ass));
+            assert_eq!(check(&facts, enc, 1_500, rate, false), Ok(()));
             let raw = Command::new(crate::ffmpeg::locate("ffmpeg").unwrap())
                 .args(["-v", "error", "-ss", "0.5", "-i"])
                 .arg(&out)
@@ -1481,10 +1558,10 @@ pub(crate) mod tests {
             };
             let dest = out_dir.join(format!("talk-clip-{:02}.mp4", n + 1));
             let tmp = temp_path(&dest);
-            encode(&job, &tmp, &AtomicBool::new(false), |_| {}).unwrap();
+            let enc = encode(&job, &tmp, &AtomicBool::new(false), |_| {}).unwrap();
             let facts = probe_output(&tmp).unwrap();
             assert_eq!(
-                check(&facts, out_ms - in_ms, output_rate(info.fps), false),
+                check(&facts, enc, out_ms - in_ms, output_rate(info.fps), false),
                 Ok(())
             );
             placed.push(place(&tmp, &dest, false).unwrap());

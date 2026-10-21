@@ -286,6 +286,7 @@ pub fn export_one(
     let checked = export::probe_output(&tmp).and_then(|facts| {
         export::check(
             &facts,
+            encoder,
             length_ms,
             export::output_rate(batch.info.fps),
             over_a_minute,
