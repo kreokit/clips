@@ -4,6 +4,7 @@ mod audio;
 mod awake;
 mod chunks;
 mod cpu;
+mod faces;
 mod ffmpeg;
 mod models;
 mod moments;

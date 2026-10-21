@@ -16,12 +16,26 @@ pinned SHA-256.
 | BlazeFace full-range (ONNX) | face detection for reframing to 9:16 | **Apache-2.0** (© Google LLC, MediaPipe; converted from TFLite to ONNX, format only) | `models-v2` | <https://github.com/google-ai-edge/mediapipe> (`face_detection_full_range.tflite`, model card: BlazeFace full range, Google 2021) |
 
 A matching Whisper model that KreoKit Captions has already downloaded is used from
-Captions' folder instead (read-only, after the same checksum check).
+Captions' folder instead (read-only, after the same checksum check). The BlazeFace licence
+text also ships with the app as `licenses/MODEL-BLAZEFACE-LICENSE.txt`.
 
 ## whisper.cpp and ggml (compiled into the app)
 
 Speech recognition uses whisper.cpp and ggml (via the whisper-rs crates), © the
 ggml / whisper.cpp authors, **MIT** licence: <https://github.com/ggml-org/whisper.cpp>.
+
+## ONNX Runtime (compiled into the app)
+
+Face detection runs with **ONNX Runtime 1.22.0**, © Microsoft Corporation, **MIT** licence
+(<https://github.com/microsoft/onnxruntime>), statically linked through the `ort` crate
+(2.0.0-rc.10, MIT OR Apache-2.0) from pyke's prebuilt libraries. ONNX Runtime contains
+third-party components (for example protobuf, Abseil, Eigen, XNNPACK), each under its own
+licence; their notices ship with the app as `licenses/ONNXRUNTIME-ThirdPartyNotices.txt`,
+next to `licenses/ONNXRUNTIME-LICENSE.txt`.
+
+On Windows, ONNX Runtime is linked against `DirectML.dll`. KreoKit Clips does **not** ship
+that file: the copy that comes with Windows 10 (version 1903 or later) and Windows 11 is
+used, and face detection runs on the CPU only.
 
 ## FFmpeg (separate program)
 
