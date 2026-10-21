@@ -10,7 +10,8 @@ URL and SHA-256 that MediaPipe's own build pins (third_party/external_files.bzl 
 The dense file, not the sparse one MediaPipe's graph uses: same F-score, slightly better
 recall, and only ordinary convolutions to convert.
 
-1. Converts it with tf2onnx (input stays NHWC, as the app feeds interleaved RGB).
+1. Converts it with tf2onnx (input stays NHWC, as the app feeds interleaved RGB), twice in
+   separate processes, and requires both files to be byte-identical.
 2. Runs TFLite and ONNX Runtime on the same inputs (the fixture photos fitted into the input
    with padding, as MediaPipe's ImageToTensor does, plus noise and a blank frame) and
    requires the raw outputs to match and the decoded detections (MediaPipe's anchors,
@@ -23,6 +24,8 @@ recall, and only ordinary convolutions to convert.
 import argparse
 import hashlib
 import json
+import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -275,7 +278,8 @@ def main() -> None:
         sys.exit(f"Unexpected TFLite input {tflite_input}; the settings above assume 1×192×192×3")
 
     target = args.out / OUT_NAME
-    tf2onnx.convert.from_tflite(str(source), opset=OPSET, output_path=str(target))
+    reproducible = convert(source, target) == convert(source, args.out / "second-run.onnx")
+    (args.out / "second-run.onnx").unlink()
     facts = model_facts(target)
     onnx_model = Onnx(target)
 
@@ -305,12 +309,13 @@ def main() -> None:
         onnx_model.run(x)
     ms_per_frame = (time.perf_counter() - start) * 10
 
-    passed = all(r["passed"] for r in results) and not facts["nonstandard_domains"]
+    passed = all(r["passed"] for r in results) and not facts["nonstandard_domains"] and reproducible
     release = release_files(args.out, target, facts)
     sums = {p.name: sha256(p) for p in [target, *release]}
     (args.out / "SHA256SUMS.txt").write_text("".join(f"{h}  {n}\n" for n, h in sums.items()))
     report = {
         "passed": passed,
+        "reproducible": reproducible,
         "source": {"url": SOURCE_URL, "sha256": SOURCE_SHA256, "mediapipe_commit": COMMIT},
         "tflite_input": tflite_input,
         "onnx": facts | {"file": OUT_NAME, "bytes": target.stat().st_size, "sha256": sums[OUT_NAME]},
@@ -346,11 +351,23 @@ def main() -> None:
     (args.out / "report.md").write_text(markdown(report, reference))
     print((args.out / "report.md").read_text())
     if not passed:
-        sys.exit("The ONNX file does not match TFLite closely enough (see report.md)")
+        sys.exit("The ONNX file failed a check (see report.md)")
 
 
 LICENSE_URL = f"https://raw.githubusercontent.com/google-ai-edge/mediapipe/{COMMIT}/LICENSE"
 MODEL_CARD_URL = "https://drive.google.com/file/d/1jpQt8TB1nMFQ49VSSBKdNEdQOygNRvCP/preview"
+
+
+def convert(source: Path, target: Path) -> str:
+    """tf2onnx in its own process with a fixed hash seed: its folded-constant names follow
+    Python's set order, which otherwise changes every run. Returns the file's SHA-256."""
+    env = os.environ | {"PYTHONHASHSEED": "0"}
+    subprocess.run(
+        [sys.executable, "-m", "tf2onnx.convert", "--tflite", str(source), "--opset", str(OPSET),
+         "--output", str(target)],
+        env=env, check=True, capture_output=True,
+    )
+    return sha256(target)
 
 
 def release_files(out: Path, target: Path, facts: dict) -> list[Path]:
@@ -380,7 +397,7 @@ unchanged; only the file format differs.
 - **Paper:** V. Bazarevsky et al., "BlazeFace: Sub-millisecond Neural Face Detection on Mobile
   GPUs", CVPR Workshop on Computer Vision for AR/VR, 2019. https://arxiv.org/abs/1907.05047
 - **Conversion:** tf2onnx {tf2onnx.__version__} (tensorflow {tf.__version__}, onnx
-  {onnx.__version__}), opset {facts['opset']}, by `scripts/export_blazeface.py` in the
+  {onnx.__version__}), opset {facts['opset']}, run with PYTHONHASHSEED=0 (byte-reproducible), by `scripts/export_blazeface.py` in the
   "Export BlazeFace" workflow of https://github.com/kreokit/clips, and checked against the
   TFLite model with onnxruntime {ort.__version__} (raw outputs and decoded faces).
 - **Input:** `input`, float32 [1, 192, 192, 3] (NHWC, RGB in [-1, 1]). **Outputs:** box and
@@ -403,6 +420,7 @@ def markdown(report: dict, reference: list[dict]) -> str:
         f"- TFLite input: {report['tflite_input']['shape']} {report['tflite_input']['dtype']}",
         f"- ONNX: `{onnx_facts['file']}`, {onnx_facts['bytes']:,} bytes, opset {onnx_facts['opset']}, "
         f"SHA-256 `{onnx_facts['sha256']}`",
+        f"- Reproducible (two conversions, byte-identical): {'yes' if report['reproducible'] else '**no**'}",
         f"- ONNX inputs: {onnx_facts['inputs']}",
         f"- ONNX outputs: {onnx_facts['outputs']}",
         f"- Ops: {', '.join(onnx_facts['ops'])}"
