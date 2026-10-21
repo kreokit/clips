@@ -13,10 +13,10 @@ pinned SHA-256.
 | Model | Used for | Licence | Mirror | Original source |
 |---|---|---|---|---|
 | Whisper Base, Small, Large-v3-turbo (ggml) | speech recognition | **MIT** (weights © 2022 OpenAI; ggml conversion © the ggml authors) | `models-v1` | <https://github.com/openai/whisper>, converted by <https://github.com/ggml-org/whisper.cpp>, files from <https://huggingface.co/ggerganov/whisper.cpp> |
+| BlazeFace full-range (ONNX) | face detection for reframing to 9:16 | **Apache-2.0** (© Google LLC, MediaPipe; converted from TFLite to ONNX, format only) | `models-v2` | <https://github.com/google-ai-edge/mediapipe> (`face_detection_full_range.tflite`, model card: BlazeFace full range, Google 2021) |
 
 A matching Whisper model that KreoKit Captions has already downloaded is used from
-Captions' folder instead (read-only, after the same checksum check). BlazeFace full-range
-(face detection, Apache-2.0) is added with milestone 4.
+Captions' folder instead (read-only, after the same checksum check).
 
 ## whisper.cpp and ggml (compiled into the app)
 
