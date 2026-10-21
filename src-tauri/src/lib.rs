@@ -199,7 +199,7 @@ async fn prepare_model(
             }
         };
         if models::resolve(model, &dirs, &cancel, emit("checking"))?.is_none() {
-            models::download(model, &dirs, &cancel, emit("downloading"))?;
+            models::download(model.file(), &dirs.ours, &cancel, emit("downloading"))?;
         }
         Ok(())
     })

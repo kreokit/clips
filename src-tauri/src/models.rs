@@ -1,10 +1,11 @@
-//! Whisper model catalog, where a model is found, and the one-time model download.
+//! Model catalog, where a model is found, and the one-time model downloads.
 //!
-//! Models are the ggml Whisper files, downloaded only from our own mirror release
-//! `models-v1` on kreokit/clips (made by `.github/workflows/mirror-whisper-models.yml`;
-//! sources, licences and attribution are listed there and in THIRD-PARTY-LICENSES.md).
+//! Models are downloaded only from our own mirror releases on kreokit/clips: the ggml
+//! Whisper files from `models-v1` (made by `.github/workflows/mirror-whisper-models.yml`)
+//! and the BlazeFace face detector from `models-v2` (made by `export-blazeface.yml`);
+//! sources, licences and attribution are listed there and in THIRD-PARTY-LICENSES.md.
 //! They are stored in `<app data dir>/models/` and checked against a pinned size and SHA-256.
-//! This download is the app's only network call.
+//! These downloads are the app's only network calls.
 //!
 //! **Models from KreoKit Captions.** Captions downloads the same files into its own app
 //! data folder. A model found there is used in place, read-only (Clips never writes into
@@ -23,7 +24,42 @@ use sha2::{Digest, Sha256};
 
 pub const CANCELLED: &str = "cancelled";
 
-const RELEASE: &str = "https://github.com/kreokit/clips/releases/download/models-v1";
+const RELEASES: &str = "https://github.com/kreokit/clips/releases/download";
+
+/// One file in one of our mirror releases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MirrorFile {
+    pub release: &'static str,
+    pub name: &'static str,
+    pub size_bytes: u64,
+    pub sha256: &'static str,
+}
+
+impl MirrorFile {
+    fn url(self) -> String {
+        format!("{RELEASES}/{}/{}", self.release, self.name)
+    }
+
+    pub fn path_in(self, models_dir: &Path) -> PathBuf {
+        models_dir.join(self.name)
+    }
+
+    /// A file counts as downloaded once the complete file is in place. Downloads land in a
+    /// `.part` file and are only renamed after the checksum matches.
+    pub fn is_downloaded(self, models_dir: &Path) -> bool {
+        has_size(&self.path_in(models_dir), self.size_bytes)
+    }
+}
+
+/// MediaPipe BlazeFace full-range, converted to ONNX (`scripts/export_blazeface.py`,
+/// byte-reproducible; workflow run 39524366294).
+#[cfg_attr(not(test), allow(dead_code))] // used by the face analysis job (M4 step 8)
+pub const FACE_MODEL: MirrorFile = MirrorFile {
+    release: "models-v2",
+    name: "blazeface_full_range.onnx",
+    size_bytes: 2_067_035,
+    sha256: "5be762f9d218872003bb780b5aec19a366bb883ee3fbd43ee27841d5604478e0",
+};
 
 /// Captions' bundle identifier; its app data folder sits next to ours.
 const CAPTIONS_APP_ID: &str = "com.kreokit.captions";
@@ -39,46 +75,32 @@ pub enum WhisperModel {
 impl WhisperModel {
     pub const ALL: [WhisperModel; 3] = [Self::Base, Self::Small, Self::LargeV3Turbo];
 
-    pub fn file_name(self) -> &'static str {
-        match self {
-            Self::Base => "ggml-base.bin",
-            Self::Small => "ggml-small.bin",
-            Self::LargeV3Turbo => "ggml-large-v3-turbo.bin",
+    /// The file in `models-v1` (unchanged from Hugging Face ggerganov/whisper.cpp; the
+    /// mirror workflow checks the same sizes and SHA-256).
+    pub fn file(self) -> MirrorFile {
+        let (name, size_bytes, sha256) = match self {
+            Self::Base => (
+                "ggml-base.bin",
+                147_951_465,
+                "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+            ),
+            Self::Small => (
+                "ggml-small.bin",
+                487_601_967,
+                "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+            ),
+            Self::LargeV3Turbo => (
+                "ggml-large-v3-turbo.bin",
+                1_624_555_275,
+                "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+            ),
+        };
+        MirrorFile {
+            release: "models-v1",
+            name,
+            size_bytes,
+            sha256,
         }
-    }
-
-    /// Size and SHA-256 of the files in `models-v1` (unchanged from Hugging Face
-    /// ggerganov/whisper.cpp; the mirror workflow checks the same values).
-    pub fn size_bytes(self) -> u64 {
-        match self {
-            Self::Base => 147_951_465,
-            Self::Small => 487_601_967,
-            Self::LargeV3Turbo => 1_624_555_275,
-        }
-    }
-
-    fn sha256(self) -> &'static str {
-        match self {
-            Self::Base => "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
-            Self::Small => "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-            Self::LargeV3Turbo => {
-                "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
-            }
-        }
-    }
-
-    fn url(self) -> String {
-        format!("{RELEASE}/{}", self.file_name())
-    }
-
-    pub fn path_in(self, models_dir: &Path) -> PathBuf {
-        models_dir.join(self.file_name())
-    }
-
-    /// A model counts as downloaded once the complete file is in place. Downloads land
-    /// in a `.part` file and are only renamed after the checksum matches.
-    pub fn is_downloaded(self, models_dir: &Path) -> bool {
-        has_size(&self.path_in(models_dir), self.size_bytes())
     }
 }
 
@@ -132,7 +154,7 @@ pub fn list(dirs: &ModelDirs) -> Vec<ModelInfo> {
         .iter()
         .map(|&id| ModelInfo {
             id,
-            size_bytes: id.size_bytes(),
+            size_bytes: id.file().size_bytes,
             source: find(id, dirs).map(|(_, source)| source),
         })
         .collect()
@@ -140,11 +162,12 @@ pub fn list(dirs: &ModelDirs) -> Vec<ModelInfo> {
 
 /// Our own complete file first, else a file of the right size in Captions' folder.
 fn find(model: WhisperModel, dirs: &ModelDirs) -> Option<(PathBuf, ModelSource)> {
-    if model.is_downloaded(&dirs.ours) {
-        return Some((model.path_in(&dirs.ours), ModelSource::Ours));
+    let file = model.file();
+    if file.is_downloaded(&dirs.ours) {
+        return Some((file.path_in(&dirs.ours), ModelSource::Ours));
     }
-    let shared = model.path_in(dirs.captions.as_deref()?);
-    has_size(&shared, model.size_bytes()).then_some((shared, ModelSource::Captions))
+    let shared = file.path_in(dirs.captions.as_deref()?);
+    has_size(&shared, file.size_bytes).then_some((shared, ModelSource::Captions))
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -168,8 +191,8 @@ pub fn resolve(
         Some((path, ModelSource::Captions)) => {
             let ok = check_shared(
                 &path,
-                model.size_bytes(),
-                model.sha256(),
+                model.file().size_bytes,
+                model.file().sha256,
                 &dirs.shared_checks(),
                 cancel,
                 on_check,
@@ -245,40 +268,37 @@ fn check_shared(
     Ok(true)
 }
 
-/// Downloads `model` from our mirror into our models folder, verifying size and SHA-256.
+/// Downloads `file` from our mirror into `models_dir`, verifying size and SHA-256.
 /// `on_progress` is called roughly every 1 MB. Returns [`CANCELLED`] if `cancel` is set.
 pub fn download(
-    model: WhisperModel,
-    dirs: &ModelDirs,
+    file: MirrorFile,
+    models_dir: &Path,
     cancel: &AtomicBool,
     on_progress: impl FnMut(Progress),
 ) -> Result<PathBuf, String> {
-    let target = model.path_in(&dirs.ours);
-    if model.is_downloaded(&dirs.ours) {
+    let target = file.path_in(models_dir);
+    if file.is_downloaded(models_dir) {
         return Ok(target);
     }
-    fs::create_dir_all(&dirs.ours).map_err(|e| format!("cannot create models folder: {e}"))?;
-    let part = target.with_extension("bin.part");
+    fs::create_dir_all(models_dir).map_err(|e| format!("cannot create models folder: {e}"))?;
+    let part = models_dir.join(format!("{}.part", file.name));
 
     let result = (|| {
-        let response = ureq::get(&model.url())
+        let response = ureq::get(&file.url())
             .call()
             .map_err(|e| format!("model download failed: {e}"))?;
         let reader = response.into_body().into_reader();
-        let file = File::create(&part).map_err(|e| format!("cannot write model file: {e}"))?;
+        let out = File::create(&part).map_err(|e| format!("cannot write model file: {e}"))?;
         copy_verified(
             reader,
-            BufWriter::new(file),
-            model.size_bytes(),
-            model.sha256(),
+            BufWriter::new(out),
+            file.size_bytes,
+            file.sha256,
             cancel,
             on_progress,
         )
         .map_err(|e| match e.as_str() {
-            CORRUPT => format!(
-                "the downloaded {} is damaged; please try again",
-                model.file_name()
-            ),
+            CORRUPT => format!("the downloaded {} is damaged; please try again", file.name),
             _ => e,
         })?;
         fs::rename(&part, &target).map_err(|e| format!("cannot save model file: {e}"))?;
@@ -376,9 +396,9 @@ pub(crate) mod tests {
 
     /// A stand-in file of the right size (`find` checks sizes only).
     fn fake(dir: &Path, model: WhisperModel) {
-        File::create(model.path_in(dir))
+        File::create(model.file().path_in(dir))
             .unwrap()
-            .set_len(model.size_bytes())
+            .set_len(model.file().size_bytes)
             .unwrap();
     }
 
@@ -394,8 +414,12 @@ pub(crate) mod tests {
     #[test]
     fn downloads_only_from_our_mirror() {
         assert_eq!(
-            WhisperModel::LargeV3Turbo.url(),
+            WhisperModel::LargeV3Turbo.file().url(),
             "https://github.com/kreokit/clips/releases/download/models-v1/ggml-large-v3-turbo.bin"
+        );
+        assert_eq!(
+            FACE_MODEL.url(),
+            "https://github.com/kreokit/clips/releases/download/models-v2/blazeface_full_range.onnx"
         );
     }
 
@@ -412,8 +436,8 @@ pub(crate) mod tests {
     #[test]
     fn partial_file_is_not_downloaded() {
         let dirs = temp_dirs("partial");
-        fs::write(WhisperModel::Base.path_in(&dirs.ours), b"truncated").unwrap();
-        assert!(!WhisperModel::Base.is_downloaded(&dirs.ours));
+        fs::write(WhisperModel::Base.file().path_in(&dirs.ours), b"truncated").unwrap();
+        assert!(!WhisperModel::Base.file().is_downloaded(&dirs.ours));
         assert_eq!(list(&dirs)[0].source, None);
     }
 
@@ -425,7 +449,7 @@ pub(crate) mod tests {
         assert_eq!(sources(&dirs), [None, None, None]);
 
         fake(&captions, WhisperModel::Small);
-        fs::write(WhisperModel::Base.path_in(&captions), b"truncated").unwrap();
+        fs::write(WhisperModel::Base.file().path_in(&captions), b"truncated").unwrap();
         assert_eq!(sources(&dirs), [None, Some(ModelSource::Captions), None]);
 
         fake(&dirs.ours, WhisperModel::Small);
@@ -450,7 +474,7 @@ pub(crate) mod tests {
         fake(&dirs.ours, WhisperModel::Base);
         assert_eq!(
             resolve(WhisperModel::Base, &dirs, &cancel, |_| panic!("checked")),
-            Ok(Some(WhisperModel::Base.path_in(&dirs.ours)))
+            Ok(Some(WhisperModel::Base.file().path_in(&dirs.ours)))
         );
         // A same-sized fake in Captions' folder fails the checksum and isn't used.
         fake(dirs.captions.as_ref().unwrap(), WhisperModel::Small);
@@ -548,8 +572,8 @@ pub(crate) mod tests {
     fn downloads_base_model() {
         let dirs = temp_dirs("download");
         let cancel = AtomicBool::new(false);
-        let path = download(WhisperModel::Base, &dirs, &cancel, |_| {}).unwrap();
-        assert!(WhisperModel::Base.is_downloaded(path.parent().unwrap()));
+        let path = download(WhisperModel::Base.file(), &dirs.ours, &cancel, |_| {}).unwrap();
+        assert!(WhisperModel::Base.file().is_downloaded(path.parent().unwrap()));
         let _ = fs::remove_file(path); // 148 MB; disk is tight on the dev Mac
     }
 
@@ -562,7 +586,7 @@ pub(crate) mod tests {
         let Some(captions) = real.captions else {
             return;
         };
-        if !WhisperModel::Base.path_in(&captions).exists() {
+        if !WhisperModel::Base.file().path_in(&captions).exists() {
             eprintln!("no Captions base model here; skipped");
             return;
         }
@@ -572,7 +596,7 @@ pub(crate) mod tests {
         };
         let cancel = AtomicBool::new(false);
         let path = resolve(WhisperModel::Base, &dirs, &cancel, |_| {}).unwrap();
-        assert_eq!(path, Some(WhisperModel::Base.path_in(&captions)));
+        assert_eq!(path, Some(WhisperModel::Base.file().path_in(&captions)));
         assert!(dirs.shared_checks().exists());
     }
 }
