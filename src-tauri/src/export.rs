@@ -1139,6 +1139,160 @@ pub(crate) mod tests {
         assert!(!out.exists());
     }
 
+    /// The captions land in the exported 9:16 frame where the layout (and the editor's
+    /// preview) puts them: the Bottom spot above the platforms' interface, and a caption
+    /// dragged up. From KreoKit Captions' `burned_position_matches_placement`.
+    #[test]
+    #[ignore = "needs FFmpeg"]
+    fn burned_captions_sit_where_the_preview_puts_them() {
+        use crate::style::{CaptionMode, Position, Segment, Style, Word};
+        let dir = temp_dir("placement");
+        let video = dir.join("black.mp4");
+        ffmpeg_ok(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1920x1080:r=25:d=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=stereo",
+            "-t",
+            "2",
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            video.to_str().unwrap(),
+        ]);
+        let cases = [
+            (Position::Bottom, None, None),
+            (Position::Top, Some(0.3), Some(0.2)),
+        ];
+        for (position, pos_x, pos_y) in cases {
+            let style = Style {
+                font_size: 80,
+                color: "#FFFFFF".into(),
+                outline_width: 0,
+                mode: CaptionMode::Line,
+                uppercase: false,
+                position,
+                pos_x,
+                pos_y,
+                ..Style::default()
+            };
+            let segment = Segment {
+                id: 0,
+                start_ms: 0,
+                end_ms: 2000,
+                text: "MARK".into(),
+                words: vec![Word {
+                    start_ms: 0,
+                    end_ms: 2000,
+                    text: "MARK".into(),
+                }],
+            };
+            let ass = crate::ass::to_ass(&[segment], &style, OUT.0, OUT.1);
+            let (out, facts, rate) = export(&dir, &video, 0, 1_500, Some(&ass));
+            assert_eq!(check(&facts, 1_500, rate, false), Ok(()));
+            let raw = Command::new(crate::ffmpeg::locate("ffmpeg").unwrap())
+                .args(["-v", "error", "-ss", "0.5", "-i"])
+                .arg(&out)
+                .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+                .output()
+                .unwrap()
+                .stdout;
+            let (w, h) = OUT;
+            assert_eq!(raw.len(), (w * h) as usize);
+            let (mut left, mut right, mut top, mut bottom) = (u32::MAX, 0, u32::MAX, 0);
+            for (i, &v) in raw.iter().enumerate() {
+                if v > 128 {
+                    let (x, y) = (i as u32 % w, i as u32 / w);
+                    (left, right, top, bottom) =
+                        (left.min(x), right.max(x), top.min(y), bottom.max(y));
+                }
+            }
+            assert!(right > left, "no caption found");
+            let (ax, ay) = style.anchor();
+            let (anchor_x, anchor_y) = (ax * w as f64, ay * h as f64);
+            let font_px = 80.0 * h as f64 / 1080.0;
+            let edge_y = if position == Position::Top {
+                top
+            } else {
+                bottom
+            } as f64;
+            println!(
+                "{position:?}: anchor ({anchor_x:.0}, {anchor_y:.0}), ink x {left}-{right}, y {top}-{bottom}"
+            );
+            assert!(((left + right) as f64 / 2.0 - anchor_x).abs() <= w as f64 * 0.02);
+            // The ink sits inside the font's line box (libass and the preview both size the
+            // box as the font size): capitals leave the descender space (~0.3 of the size in
+            // Montserrat) below them, so the ink is within 35% of the size of the anchor. A
+            // misplaced caption would be hundreds of pixels off.
+            assert!(
+                (edge_y - anchor_y).abs() <= font_px * 0.35,
+                "{position:?}: edge {edge_y}, anchor {anchor_y}"
+            );
+            if position == Position::Bottom {
+                // Above the bottom 22% that TikTok, Reels and Shorts cover.
+                assert!((bottom as f64) < h as f64 * (1.0 - 0.22));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs FFmpeg"]
+    fn n_clips_give_n_files_and_nothing_is_overwritten() {
+        let dir = temp_dir("n-clips");
+        let video = make_source(&dir, "25", 10.0, 10.0, 0.0);
+        let out_dir = dir.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::write(out_dir.join("talk-clip-02.mp4"), b"mine").unwrap();
+        let info = crate::probe::probe_video(&video).unwrap();
+        let keyframes = [];
+        let mut placed = Vec::new();
+        for (n, (in_ms, out_ms)) in [(0, 2_000), (3_000, 5_000), (6_000, 9_000)]
+            .into_iter()
+            .enumerate()
+        {
+            let job = ClipJob {
+                video: &video,
+                source: (info.width, info.height),
+                fps: info.fps,
+                in_ms,
+                out_ms,
+                picture: Picture::Crop {
+                    keyframes: &keyframes,
+                    axis: Axis::X,
+                },
+                ass: None,
+                fonts: None,
+            };
+            let dest = out_dir.join(format!("talk-clip-{:02}.mp4", n + 1));
+            let tmp = temp_path(&dest);
+            encode(&job, &tmp, &AtomicBool::new(false), |_| {}).unwrap();
+            let facts = probe_output(&tmp).unwrap();
+            assert_eq!(
+                check(&facts, out_ms - in_ms, output_rate(info.fps), false),
+                Ok(())
+            );
+            placed.push(place(&tmp, &dest, false).unwrap());
+        }
+        let mut names: Vec<String> = names_in(&out_dir).into_iter().collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "talk-clip-01.mp4",
+                "talk-clip-02-2.mp4",
+                "talk-clip-02.mp4",
+                "talk-clip-03.mp4"
+            ]
+        );
+        assert_eq!(fs::read(out_dir.join("talk-clip-02.mp4")).unwrap(), b"mine");
+        assert_eq!(placed[1], out_dir.join("talk-clip-02-2.mp4"));
+    }
+
     /// Mean brightness (0–255) of each output row of a gray 1080×1920 frame.
     fn row_means(source: &str, graph: &str) -> Vec<f64> {
         let output = Command::new(crate::ffmpeg::locate("ffmpeg").unwrap())
