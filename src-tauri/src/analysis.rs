@@ -22,7 +22,8 @@ use crate::tracks::Sample;
 
 /// Video per cache block.
 pub const BLOCK_MS: u64 = 10_000;
-const VERSION: u32 = 1;
+/// 2: the tiles also run on frames with one face (2026-10-21).
+const VERSION: u32 = 2;
 const META: &str = "meta.json";
 
 /// What the cache depends on.

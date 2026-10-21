@@ -12,9 +12,11 @@
 //! (logits clipped to ±100) ≥ 0.6, weighted non-maximum suppression at IoU 0.3.
 //!
 //! **Small faces:** a 16:9 frame fitted into 192 px leaves a face under ~8% of the frame
-//! height only a few pixels. When the whole frame finds nothing, [`Detector::detect`]
-//! looks again at two overlapping squares along the long side (1.78× the resolution for
-//! 16:9) and merges what they find. Only then, so frames with a face cost one model run.
+//! height only a few pixels. When the whole frame finds one face or none,
+//! [`Detector::detect`] looks again at two overlapping squares along the long side (1.78×
+//! the resolution for 16:9) and merges what they find (decided 2026-10-21: in a wide
+//! two-person shot the second, smaller face was often missed). Frames with two or more
+//! faces cost one model run, the others three.
 //!
 //! [`models::FACE_MODEL`]: crate::models::FACE_MODEL
 
@@ -146,15 +148,15 @@ impl Detector {
         })
     }
 
-    /// The faces in `frame`, best first: the whole frame, and if that finds nothing, two
-    /// overlapping tiles (wide or tall frames only).
+    /// The faces in `frame`, best first: the whole frame, and if that finds one face or
+    /// none, also two overlapping tiles (wide or tall frames only), merged with it.
     pub fn detect(&mut self, frame: Rgb) -> Result<Vec<Face>, String> {
-        let faces = self.detect_whole(frame)?;
-        if faces.is_empty() {
-            self.detect_tiled(frame)
-        } else {
-            Ok(faces)
+        let mut faces = self.detect_whole(frame)?;
+        if faces.len() > 1 {
+            return Ok(faces);
         }
+        faces.extend(self.detect_tiled(frame)?);
+        Ok(weighted_nms(faces))
     }
 
     /// The whole frame fitted into the input.
@@ -906,10 +908,10 @@ pub(crate) mod tests {
         }
     }
 
-    /// What the detector sees in the real Pexels clips (no truth; prints a summary). Every
-    /// sample has a face. Measured 2026-10-21: podcast-wide (faces ~10% of the height,
-    /// turned sideways) finds both people in 45 of 80 samples and one in the rest (the
-    /// tiles run only when nothing is found); the tracker bridges the gaps.
+    /// What the detector sees in the real Pexels clips (no truth; prints a summary).
+    /// Measured 2026-10-21: podcast-wide (faces ~10% of the height, turned sideways) finds
+    /// both people in all 80 samples (45 of 80 while the tiles ran only on empty frames);
+    /// talking-head one face in all 48.
     /// `cargo test --release real_clip_faces -- --ignored --nocapture`.
     #[test]
     #[ignore]
@@ -930,6 +932,8 @@ pub(crate) mod tests {
                 found.len()
             );
             assert_eq!(counts[0], 0, "{name}: samples without a face");
+            let people = if name.starts_with("podcast") { 2 } else { 1 };
+            assert_eq!(counts[people], found.len(), "{name}: {counts:?}");
         }
     }
 
