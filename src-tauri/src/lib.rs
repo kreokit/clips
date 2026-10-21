@@ -8,6 +8,8 @@ mod awake;
 mod captions;
 mod chunks;
 mod cpu;
+#[cfg_attr(not(test), allow(dead_code))] // the export job (M5 step 5)
+mod export;
 mod faces;
 mod ffmpeg;
 mod frames;
