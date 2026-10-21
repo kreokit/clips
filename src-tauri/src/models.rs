@@ -573,7 +573,11 @@ pub(crate) mod tests {
         let dirs = temp_dirs("download");
         let cancel = AtomicBool::new(false);
         let path = download(WhisperModel::Base.file(), &dirs.ours, &cancel, |_| {}).unwrap();
-        assert!(WhisperModel::Base.file().is_downloaded(path.parent().unwrap()));
+        assert!(
+            WhisperModel::Base
+                .file()
+                .is_downloaded(path.parent().unwrap())
+        );
         let _ = fs::remove_file(path); // 148 MB; disk is tight on the dev Mac
     }
 
