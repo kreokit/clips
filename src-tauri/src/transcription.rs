@@ -263,6 +263,12 @@ fn shifted(mut transcript: Transcript, loudness: Vec<f32>, ms: u64) -> (Transcri
     (transcript, loudness)
 }
 
+/// The settings a cached transcript was made with (a new project of the same video
+/// takes them, so the transcript is used rather than made again).
+pub fn cached_settings(dir: &Path) -> Option<Settings> {
+    read_json::<Meta>(&dir.join(META_FILE)).map(|m| m.settings)
+}
+
 fn cache_matches(dir: &Path, meta: &Meta) -> bool {
     read_json::<Meta>(&dir.join(META_FILE)).as_ref() == Some(meta)
 }

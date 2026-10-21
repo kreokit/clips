@@ -29,6 +29,12 @@ const THUMBNAIL_FILE: &str = "thumbnail.jpg";
 /// The finder settings chosen last (in any project), for new projects; in the projects
 /// folder, next to the project folders.
 const LAST_FINDER_FILE: &str = "last-finder.json";
+/// A project's transcript cache, inside its folder (see `transcription.rs`).
+pub const TRANSCRIPT_DIR: &str = "transcript";
+/// Transcripts of deleted projects, by the id a new project of the same video would get,
+/// so opening that video again doesn't transcribe it again. In the projects folder (not
+/// a project: its name isn't an id).
+const KEPT_DIR: &str = "kept-transcripts";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Project {
@@ -259,7 +265,7 @@ fn remove_empty_duplicates(root: &Path, project: &Project, others: &[Project]) {
         if p.id != project.id
             && p.video_path == project.video_path
             && p.clips.is_empty()
-            && !dir.join("transcript").exists()
+            && !dir.join(TRANSCRIPT_DIR).exists()
         {
             let _ = fs::remove_dir_all(dir);
         }
@@ -342,6 +348,17 @@ pub fn open_video(
     if !info.has_audio {
         return Err("This video has no sound, so there is nothing to transcribe.".into());
     }
+    // The transcript of a deleted project of this video comes back, with its settings.
+    let dir = project_dir(root, &id)?;
+    let kept = root.join(KEPT_DIR).join(&id);
+    let mut transcription = Settings::default();
+    if kept.is_dir() {
+        fs::create_dir_all(&dir).map_err(|e| format!("cannot create project folder: {e}"))?;
+        let transcript = dir.join(TRANSCRIPT_DIR);
+        if fs::rename(&kept, &transcript).is_ok() {
+            transcription = crate::transcription::cached_settings(&transcript).unwrap_or_default();
+        }
+    }
     let project = Project {
         version: FORMAT_VERSION,
         id: id.clone(),
@@ -350,14 +367,14 @@ pub fn open_video(
         video_size: size,
         video_mtime_ms: mtime,
         video: info,
-        transcription: Settings::default(),
+        transcription,
         finder: last_finder(root),
         clips: Vec::new(),
         created_at: now,
         opened_at: now,
         updated_at: now,
     };
-    write_project(&project_dir(root, &id)?, &project)?;
+    write_project(&dir, &project)?;
     Ok(project)
 }
 
@@ -404,8 +421,22 @@ pub fn locate_video(
 }
 
 /// Deletes the project folder (never the video).
+/// Deletes the project's folder (never its video). Its transcript is kept for the next
+/// project of the same video (see [`KEPT_DIR`]).
 pub fn remove(root: &Path, id: &str) -> Result<(), String> {
     let dir = project_dir(root, id)?;
+    let transcript = dir.join(TRANSCRIPT_DIR);
+    if let (Ok(project), true) = (load(root, id), transcript.is_dir()) {
+        let key = project_id(
+            &project.video_path,
+            project.video_size,
+            project.video_mtime_ms,
+        );
+        let kept = root.join(KEPT_DIR);
+        let _ = fs::remove_dir_all(kept.join(&key));
+        let _ = fs::create_dir_all(&kept);
+        let _ = fs::rename(&transcript, kept.join(key));
+    }
     match fs::remove_dir_all(&dir) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -415,6 +446,15 @@ pub fn remove(root: &Path, id: &str) -> Result<(), String> {
 
 /// The project's cached thumbnail, making it with FFmpeg if needed (a frame about one
 /// second in, or the first frame for very short videos), 480 px wide.
+/// Deletes the project's transcript, for "Transcribe again" (clips stay).
+pub fn discard_transcript(root: &Path, id: &str) -> Result<(), String> {
+    match fs::remove_dir_all(project_dir(root, id)?.join(TRANSCRIPT_DIR)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("cannot remove the transcript: {e}")),
+    }
+}
+
 pub fn thumbnail(root: &Path, id: &str) -> Result<PathBuf, String> {
     let project = load(root, id)?;
     let out = project_dir(root, id)?.join(THUMBNAIL_FILE);
@@ -487,6 +527,7 @@ fn grab_frame(video: &Path, seeks: &[u64], out: &Path) -> Result<PathBuf, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::WhisperModel;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()
@@ -618,6 +659,86 @@ mod tests {
         let mut ids: Vec<_> = list(&root).into_iter().map(|e| e.project.id).collect();
         ids.sort();
         assert_eq!(ids, [kept.id.clone(), newer.id.clone()]);
+    }
+
+    /// A fake finished transcript cache made with `model`.
+    fn fake_transcript(root: &Path, id: &str, model: &str) {
+        let dir = root.join(id).join(TRANSCRIPT_DIR);
+        fs::create_dir_all(&dir).unwrap();
+        let settings = serde_json::json!({
+            "model": model, "language": "en", "custom_words": "", "hide_non_speech": true
+        });
+        fs::write(
+            dir.join("meta.json"),
+            serde_json::json!({ "version": 2, "settings": settings, "video_size": 1,
+                                "video_mtime_ms": 1, "limits_ms": [1, 2, 3] })
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(dir.join("transcript.json"), b"{}").unwrap();
+    }
+
+    #[test]
+    fn deleting_keeps_the_video_and_the_transcript_for_a_fresh_project() {
+        let (root, video) = setup("delete");
+        let p = open_video(&root, &video, probe_ok, 1).unwrap();
+        let p = Project {
+            name: "Renamed".into(),
+            clips: vec![Clip {
+                id: 1,
+                in_ms: 0,
+                out_ms: 30_000,
+                status: ClipStatus::Kept,
+                source: ClipSource::Manual,
+                edited: false,
+                moment: None,
+            }],
+            ..p
+        };
+        save(&root, &p, 2).unwrap();
+        fake_transcript(&root, &p.id, "large-v3-turbo");
+        remove(&root, &p.id).unwrap();
+        assert!(video.is_file(), "the video is never touched");
+        assert!(!root.join(&p.id).exists());
+        assert!(list(&root).is_empty(), "kept transcripts aren't projects");
+
+        // Opening the video again: a fresh project with the transcript and its settings.
+        let fresh = open_video(&root, &video, probe_ok, 5).unwrap();
+        assert_eq!(fresh.id, p.id);
+        assert_eq!((fresh.created_at, fresh.name.as_str()), (5, "My Talk"));
+        assert!(fresh.clips.is_empty());
+        assert_eq!(fresh.transcription.model, WhisperModel::LargeV3Turbo);
+        assert_eq!(fresh.transcription.language.as_deref(), Some("en"));
+        assert!(
+            root.join(&p.id)
+                .join(TRANSCRIPT_DIR)
+                .join("transcript.json")
+                .is_file()
+        );
+        assert!(!root.join(KEPT_DIR).join(&p.id).exists());
+
+        // Without a transcript, nothing is kept.
+        remove(&root, &p.id).unwrap();
+        let again = open_video(&root, &video, probe_ok, 6).unwrap();
+        discard_transcript(&root, &again.id).unwrap();
+        remove(&root, &again.id).unwrap();
+        assert_eq!(
+            open_video(&root, &video, probe_ok, 7)
+                .unwrap()
+                .transcription,
+            Settings::default()
+        );
+    }
+
+    #[test]
+    fn transcribe_again_discards_only_the_transcript() {
+        let (root, video) = setup("discard");
+        let p = open_video(&root, &video, probe_ok, 1).unwrap();
+        fake_transcript(&root, &p.id, "small");
+        discard_transcript(&root, &p.id).unwrap();
+        assert!(!root.join(&p.id).join(TRANSCRIPT_DIR).exists());
+        assert_eq!(load(&root, &p.id).unwrap().id, p.id);
+        discard_transcript(&root, &p.id).unwrap(); // nothing left: fine
     }
 
     #[test]

@@ -68,7 +68,7 @@ async fn list_projects(app: AppHandle) -> Result<Vec<ProjectEntry>, String> {
 /// Brings a project's transcript made before audio padding onto the video's clock, with
 /// its clips (`transcription::upgrade`); the video is probed only for such a transcript.
 fn upgrade(root: &Path, project: Project) -> Result<Project, String> {
-    let dir = projects::project_dir(root, &project.id)?.join("transcript");
+    let dir = projects::project_dir(root, &project.id)?.join(projects::TRANSCRIPT_DIR);
     let video = PathBuf::from(&project.video_path);
     match transcription::upgrade(&dir, || probe::audio_start_ms(&video))? {
         Some(ms) => projects::shift_clips(root, project, ms),
@@ -143,6 +143,13 @@ async fn remove_project(app: AppHandle, id: String) -> Result<(), String> {
     blocking(move || projects::remove(&root, &id)).await
 }
 
+/// "Transcribe again": deletes the project's transcript; its clips stay.
+#[tauri::command]
+async fn discard_transcript(app: AppHandle, id: String) -> Result<(), String> {
+    let root = projects_root(&app)?;
+    blocking(move || projects::discard_transcript(&root, &id)).await
+}
+
 /// Path of the project's thumbnail (made on first request), for `convertFileSrc`.
 #[tauri::command]
 async fn project_thumbnail(app: AppHandle, id: String) -> Result<String, String> {
@@ -212,7 +219,7 @@ fn transcript_job(
 ) -> Result<(Project, PathBuf, transcription::Video), String> {
     let root = projects_root(app)?;
     let project = projects::load(&root, id)?;
-    let dir = projects::project_dir(&root, id)?.join("transcript");
+    let dir = projects::project_dir(&root, id)?.join(projects::TRANSCRIPT_DIR);
     let video = transcription::Video {
         size: project.video_size,
         mtime_ms: project.video_mtime_ms,
@@ -463,6 +470,7 @@ pub fn run() {
             save_project,
             locate_video,
             remove_project,
+            discard_transcript,
             project_thumbnail,
             clip_thumbnail,
             waveform_range,
