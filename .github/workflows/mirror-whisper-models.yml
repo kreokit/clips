@@ -89,4 +89,4 @@ jobs:
           Source and attribution: `whisper-models.SOURCE.md`. Licence texts: `whisper-weights.LICENSE.txt` (OpenAI Whisper weights) and `whisper.cpp-conversion.LICENSE.txt` (ggml conversion). Checksums for every file are in `SHA256SUMS.txt`.
           EOF
           gh release create "$TAG" out/* -R "$GITHUB_REPOSITORY" \
-            --title "AI models v1 (mirror)" --notes-file notes.md --latest=false
+            --title "AI models v1 (mirror)" --notes-file notes.md --prerelease --latest=false

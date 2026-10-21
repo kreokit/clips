@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-21):** Milestones 1–4 (Scaffold, Transcribe long videos, moment finder + clips board, Reframe) are done and tested. Milestones 1–5 (… Reframe, Captions + export all) are done and tested. Next: milestone 6 (Release), once the user says go.
+**Status (2026-10-21):** Milestones 1–5 (Scaffold, Transcribe long videos, moment finder + clips board, Reframe, Captions + export all) are done and tested. Milestone 6 (Release): go given 2026-10-21, in progress.
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -175,7 +175,12 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
    - **Decided 2026-10-21 (user, M5 plan):** one caption style per project, the last style used remembered for new projects; word fixes per project (every clip sharing the word shows the fix; "Transcribe again" warns they'll be lost); under TikTok Rewards, clips under 61 s are listed in Export all with the note, unticked by default; SRT per clip off by default. **TikTok-ready MP4:** yuv420p, H.264 High profile, BT.709 colour tags, `+faststart`, 48 kHz AAC, all checked with ffprobe in the e2e tests. Before Export all, estimate the size (~10 Mbit/s × length) and warn when free space minus a 2 GB margin is too low. Safe file names: strip characters that break on Windows/macOS, shorten long video titles to ~60 characters, keep `-clip-01` numbering. Warn in the editor when the caption box overlaps the face in the crop.
 6. **Release:** reuse the release workflow, `--self-test` (transcribe a short fixture, find ≥1 moment, reframe, export one clip and verify size/duration), draft pre-release v0.1.0-alpha.
    - **Decided 2026-10-21 (user, after the M5 test): OpenH264 on Linux / Windows may not make High profile; don't fail the release for it.** There, accept **Main or Constrained Baseline** (TikTok accepts them): the self-test checks "H.264 yuv420p" plus faststart instead of requiring High. High stays required with VideoToolbox (macOS) and Media Foundation if it delivers it. Apply the same rule to the app's own `export::check` (today it requires High for every encoder, so an OpenH264 export would be reported as failed): make the accepted profiles depend on the encoder used (`encode` returns it).
-   - **Decided 2026-10-21 (user):** the self-test exports one short clip **with the release encoder** and verifies it with ffprobe (High profile, yuv420p, faststart, plus the rest of `export::check`). Ready: `export::self_check(work_dir, fonts)` (synthetic 3 s source, 2 s clip with a caption, `EncoderChoice::Release`, returns "export: h264_videotoolbox, 1080×1920 H.264 High yuv420p, faststart, 2.002 s"); `selftest.rs` calls it and fails on an error. Its test runs on macOS only (CI's Linux FFmpeg 4.4 OpenH264 can't make High; the release workflow's self-test covers every platform with the bundled FFmpeg 9).
+   - **Decided 2026-10-21 (user):** the self-test exports one short clip **with the release encoder** and verifies it with ffprobe (High profile, yuv420p, faststart, plus the rest of `export::check`). Ready: `export::self_check(work_dir, fonts)` (synthetic 3 s source, 2 s clip with a caption, `EncoderChoice::Release`, returns "export: h264_videotoolbox, 1080×1920 H.264 High yuv420p, faststart, 2.002 s"); `selftest.rs` (M6) calls it and fails on an error. Its test runs on macOS only (CI's Linux FFmpeg 4.4 OpenH264 can't make High; the release workflow's self-test covers every platform with the bundled FFmpeg 9).
+   - **Decided 2026-10-21 (user, M6 go):**
+     - **Accepted H.264 profiles per encoder** (app `export::check` and the self-test alike): VideoToolbox → High; Media Foundation → High or Main (no fallback to OpenH264 for that); OpenH264 → High, Main or Constrained Baseline. yuv420p and faststart are required for every encoder.
+     - **Self-test fixture:** one ~12 s synthetic video (the `moving-face` picture + `say` speech of a known script), made by `scripts/make_reframe_fixtures.py`; the self-test finds moments on it with Custom lengths.
+     - **No release shows "Latest":** v0.1.0-alpha is a pre-release, and `models-v1` / `models-v2` were marked pre-releases too (done 2026-10-21; the app downloads models only by tag, `…/releases/download/models-vN/<file>`, never `/releases/latest`; checked). New `models-vN` mirrors are created as pre-releases. Never link `/releases/latest`; link the tag.
+     - Push after every step; stop when the draft pre-release is ready (the user runs `--self-test` on the Intel build and tests the app before publishing).
 
 ## Tests (our oracle)
 
@@ -191,7 +196,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 - **Punctuation recovery** for stretches Whisper left unpunctuated (the pause fallback finds about one sentence end in seven there); e.g. re-run such a part with a punctuated prompt.
 
-- **The "Latest" release badge (decide at M6):** our app releases are pre-releases, and GitHub can't mark a pre-release as latest, so `models-v1` keeps the badge (`/releases/latest` points at it). Decide at M6 how it should work (e.g. publish v0.1.0 as a full release, or never link `/releases/latest`).
+- **Cutout's model releases** (user, 2026-10-21): mark `kreokit/cutout`'s `models-v1` and `models-v2` as pre-releases too (as done for Clips at M6), after checking Cutout downloads only by tag (it does: `…/releases/download/models-vN/…`), so the model mirror never shows as the main download ("Latest").
 
 - **Audio offset per project** (user, 2026-10-21): a setting of ±2 s, applied in the preview and the export, for source files whose sound is out of sync with the picture (seen in a downloaded file during the M4 test; not KreoKit's doing).
 
