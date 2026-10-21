@@ -6,6 +6,7 @@ mod chunks;
 mod cpu;
 mod faces;
 mod ffmpeg;
+mod frames;
 mod models;
 mod moments;
 mod probe;
