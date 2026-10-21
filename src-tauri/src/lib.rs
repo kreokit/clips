@@ -11,6 +11,7 @@ mod models;
 mod moments;
 mod probe;
 mod projects;
+mod reframe;
 mod sentences;
 mod tracks;
 mod transcribe;

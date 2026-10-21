@@ -281,7 +281,7 @@ fn choose_in_shot(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const FRAME: (f32, f32) = (640.0, 360.0);
