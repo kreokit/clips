@@ -1,5 +1,6 @@
 //! KreoKit Clips: long video → vertical short clips with captions, offline.
 
+mod analysis;
 mod audio;
 mod awake;
 mod chunks;
@@ -40,6 +41,17 @@ struct CancelFlag(Arc<AtomicBool>);
 /// Set while a transcription runs; there is only ever one.
 #[derive(Default)]
 struct Busy(Arc<AtomicBool>);
+
+/// The face analysis job (one at a time, never beside a transcription): whether it runs,
+/// and its own Cancel.
+#[derive(Default)]
+struct FacesJob {
+    running: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+}
+
+/// What `analyze_faces` returns while a transcription runs (the frontend tries later).
+const TRANSCRIBING: &str = "transcribing";
 
 /// Runs blocking work (ffprobe, later whisper and FFmpeg) off the async runtime.
 async fn blocking<T: Send + 'static>(
@@ -271,6 +283,7 @@ async fn transcribe(
     app: AppHandle,
     cancel: State<'_, CancelFlag>,
     busy: State<'_, Busy>,
+    faces: State<'_, FacesJob>,
     id: String,
     settings: Settings,
 ) -> Result<Transcript, String> {
@@ -278,6 +291,16 @@ async fn transcribe(
         return Err("A transcription is already running.".into());
     }
     let busy = busy.0.clone();
+    // Transcription comes first: a running face analysis stops (it resumes later from its
+    // finished blocks) and is waited for, so the two never run at the same time.
+    faces.cancel.store(true, Ordering::SeqCst);
+    let faces_running = faces.running.clone();
+    for _ in 0..600 {
+        if !faces_running.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio_sleep_ms(50).await;
+    }
     let cancel = cancel.0.clone();
     cancel.store(false, Ordering::Relaxed);
     let result = blocking(move || {
@@ -308,6 +331,118 @@ async fn transcribe(
     .await;
     busy.store(false, Ordering::SeqCst);
     result
+}
+
+async fn tokio_sleep_ms(ms: u64) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(std::time::Duration::from_millis(ms))
+    })
+    .await;
+}
+
+/// A project's face cache folder and the video facts it is checked against.
+fn faces_job(app: &AppHandle, id: &str) -> Result<(PathBuf, analysis::Video), String> {
+    let root = projects_root(app)?;
+    let project = projects::load(&root, id)?;
+    let dir = projects::project_dir(&root, id)?.join(projects::FACES_DIR);
+    let video = analysis::Video {
+        path: PathBuf::from(&project.video_path),
+        width: project.video.width,
+        height: project.video.height,
+        duration_ms: project.video.duration_ms,
+        size: project.video_size,
+        mtime_ms: project.video_mtime_ms,
+    };
+    Ok((dir, video))
+}
+
+#[derive(Clone, serde::Serialize)]
+struct FacesProgress {
+    id: String,
+    #[serde(flatten)]
+    progress: analysis::Progress,
+}
+
+/// Finds the faces in `ranges` of the project's video (what isn't cached yet), emitting
+/// `faces-progress`. Downloads the face model first if needed (2 MB). Fails with
+/// "transcribing" while a transcription runs, and with "cancelled" when stopped.
+#[tauri::command]
+async fn analyze_faces(
+    app: AppHandle,
+    busy: State<'_, Busy>,
+    faces: State<'_, FacesJob>,
+    id: String,
+    ranges: Vec<(u64, u64)>,
+) -> Result<(), String> {
+    if busy.0.load(Ordering::SeqCst) {
+        return Err(TRANSCRIBING.into());
+    }
+    if faces.running.swap(true, Ordering::SeqCst) {
+        return Err("A face analysis is already running.".into());
+    }
+    let running = faces.running.clone();
+    // A transcription that started meanwhile wins.
+    if busy.0.load(Ordering::SeqCst) {
+        running.store(false, Ordering::SeqCst);
+        return Err(TRANSCRIBING.into());
+    }
+    let cancel = faces.cancel.clone();
+    cancel.store(false, Ordering::SeqCst);
+    let result = blocking(move || {
+        let (dir, video) = faces_job(&app, &id)?;
+        let models_dir = model_dirs(&app)?.ours;
+        let _awake = awake::KeepAwake::new("finding faces");
+        let load = || {
+            let path = models::download(models::FACE_MODEL, &models_dir, &cancel, |_| {})?;
+            faces::Detector::load(&path)
+        };
+        let emitter = app.clone();
+        analysis::run(&dir, &video, &ranges, load, &cancel, move |progress| {
+            let _ = emitter.emit(
+                "faces-progress",
+                FacesProgress {
+                    id: id.clone(),
+                    progress,
+                },
+            );
+        })
+    })
+    .await;
+    running.store(false, Ordering::SeqCst);
+    result
+}
+
+/// Stops the running face analysis (finished blocks are kept).
+#[tauri::command]
+fn cancel_faces(faces: State<'_, FacesJob>) {
+    faces.cancel.store(true, Ordering::SeqCst);
+}
+
+/// The automatic crop path for a clip, or `None` until its faces are analysed.
+#[tauri::command]
+async fn reframe_path(
+    app: AppHandle,
+    id: String,
+    in_ms: u64,
+    out_ms: u64,
+) -> Result<Option<reframe::Path>, String> {
+    blocking(move || {
+        let (dir, video) = faces_job(&app, &id)?;
+        let Some(samples) = analysis::samples(&dir, &video, in_ms, out_ms) else {
+            return Ok(None);
+        };
+        let (w, h) = frames::sample_size(video.width, video.height);
+        let frame = (w as f32, h as f32);
+        let tracks = tracks::track(&samples);
+        let subjects = tracks::subjects(&samples, &tracks, frame);
+        Ok(Some(reframe::auto_path(
+            &samples,
+            &subjects,
+            (video.width, video.height),
+            frame,
+        )))
+    })
+    .await
 }
 
 /// Path of a clip's thumbnail, the frame `ms` into the video (made on first request).
@@ -466,6 +601,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(CancelFlag::default())
         .manage(Busy::default())
+        .manage(FacesJob::default())
         .invoke_handler(tauri::generate_handler![
             probe_video,
             list_projects,
@@ -483,6 +619,9 @@ pub fn run() {
             cancel,
             transcript_status,
             transcribe,
+            analyze_faces,
+            cancel_faces,
+            reframe_path,
             transcript_text,
             find_moments,
             score_clips,
@@ -492,8 +631,15 @@ pub fn run() {
             report_problem,
             dev_startup_video
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Quitting stops the jobs, so their FFmpeg processes end with the app.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<FacesJob>().cancel.store(true, Ordering::SeqCst);
+                app.state::<CancelFlag>().0.store(true, Ordering::SeqCst);
+            }
+        });
 }
 
 #[cfg(test)]

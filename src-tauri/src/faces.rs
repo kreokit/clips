@@ -18,9 +18,6 @@
 //!
 //! [`models::FACE_MODEL`]: crate::models::FACE_MODEL
 
-// Used by the face analysis job from M4 step 8 on.
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use ort::session::Session;
@@ -47,12 +44,19 @@ const NMS_IOU: f32 = 0.3;
 /// 3:2 and 16:9, not 4:3 (its tiles would add only a third more detail).
 const TILE_MIN_ASPECT: f32 = 1.5;
 
-/// Keypoint indices, from the person's point of view (MediaPipe's order).
+/// Keypoint indices, from the person's point of view (MediaPipe's order). (Only the tests
+/// read keypoints so far.)
+#[allow(dead_code)]
 pub const RIGHT_EYE: usize = 0;
+#[allow(dead_code)]
 pub const LEFT_EYE: usize = 1;
+#[allow(dead_code)]
 pub const NOSE: usize = 2;
+#[allow(dead_code)]
 pub const MOUTH: usize = 3;
+#[allow(dead_code)]
 pub const RIGHT_EAR: usize = 4;
+#[allow(dead_code)]
 pub const LEFT_EAR: usize = 5;
 
 /// A face in frame pixels.

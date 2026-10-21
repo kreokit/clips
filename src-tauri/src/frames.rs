@@ -12,9 +12,6 @@
 //! long side is at most [`MAX_SIDE`]: enough for the face model's 192 px input and for
 //! its two-tile pass (a 640×360 frame gives two 360 px squares).
 
-// Used by the face analysis job from M4 step 8 on.
-#![allow(dead_code)]
-
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};

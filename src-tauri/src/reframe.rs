@@ -27,9 +27,6 @@
 //! joining the one before (a cut). The editor's preview (TS) and the export (FFmpeg
 //! expression) draw the same curve.
 
-// Used by the face analysis job and the editor from M4 step 8 on.
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 
 use crate::tracks::{Sample, Subject};
@@ -96,6 +93,7 @@ pub struct Keyframe {
 }
 
 /// Smootherstep: 0 → 1 with zero speed and acceleration at both ends.
+#[cfg_attr(not(test), allow(dead_code))] // the 9:16 thumbnails (step 11) and export (M5)
 pub fn ease(k: f32) -> f32 {
     let k = k.clamp(0.0, 1.0);
     k * k * k * (k * (6.0 * k - 15.0) + 10.0)
@@ -114,6 +112,7 @@ pub struct Path {
 /// The crop centre at `t_ms`: between keyframes linear (eased into an `ease` keyframe), a
 /// jump at a `jump` keyframe, constant before the first and after the last. 0.5 without
 /// keyframes.
+#[cfg_attr(not(test), allow(dead_code))] // the 9:16 thumbnails (step 11) and export (M5)
 pub fn position_at(keyframes: &[Keyframe], t_ms: u64) -> f32 {
     let after = keyframes.partition_point(|k| k.t_ms <= t_ms);
     match (

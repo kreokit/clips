@@ -53,7 +53,7 @@ impl MirrorFile {
 
 /// MediaPipe BlazeFace full-range, converted to ONNX (`scripts/export_blazeface.py`,
 /// byte-reproducible; workflow run 39524366294).
-#[cfg_attr(not(test), allow(dead_code))] // used by the face analysis job (M4 step 8)
+
 pub const FACE_MODEL: MirrorFile = MirrorFile {
     release: "models-v2",
     name: "blazeface_full_range.onnx",

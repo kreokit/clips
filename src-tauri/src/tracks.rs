@@ -12,9 +12,6 @@
 //!    the switch is moved back to when that face started being better. At a cut the
 //!    choice starts over. Speaker changes are cuts, not pans (`reframe.rs`).
 
-// Used by the face analysis job and the crop path from M4 step 7 on.
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 
 use crate::faces::{Face, iou};

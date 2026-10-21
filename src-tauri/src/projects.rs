@@ -31,6 +31,8 @@ const THUMBNAIL_FILE: &str = "thumbnail.jpg";
 const LAST_FINDER_FILE: &str = "last-finder.json";
 /// A project's transcript cache, inside its folder (see `transcription.rs`).
 pub const TRANSCRIPT_DIR: &str = "transcript";
+/// The face analysis cache (`analysis.rs`).
+pub const FACES_DIR: &str = "faces";
 /// Transcripts of deleted projects, by the id a new project of the same video would get,
 /// so opening that video again doesn't transcribe it again. In the projects folder (not
 /// a project: its name isn't an id).
