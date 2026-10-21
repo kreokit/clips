@@ -217,6 +217,63 @@ pub fn auto_path(
     path
 }
 
+/// The crop centre over time as an FFmpeg expression in `t` (seconds since `start_ms`, as
+/// after `-ss start`): the same pieces as [`position_at`] (constant outside, linear, eased
+/// with smootherstep, held until a jump). Only basic functions, for FFmpeg 4.4.
+#[cfg_attr(not(test), allow(dead_code))] // the export (M5)
+fn position_expr(keyframes: &[Keyframe], start_ms: u64) -> String {
+    let secs = |k: &Keyframe| (k.t_ms as f64 - start_ms as f64) / 1000.0;
+    let Some(last) = keyframes.last() else {
+        return "0.5".into();
+    };
+    let mut expr = format!("{:.6}", last.pos);
+    for pair in keyframes.windows(2).rev() {
+        let (prev, next) = (&pair[0], &pair[1]);
+        let (t0, t1) = (secs(prev), secs(next));
+        let piece = if next.jump || next.t_ms == prev.t_ms {
+            format!("{:.6}", prev.pos)
+        } else {
+            let k = format!("((t-{t0:.4})/{:.4})", t1 - t0);
+            let k = if next.ease {
+                format!("({k}*{k}*{k}*({k}*(6*{k}-15)+10))")
+            } else {
+                k
+            };
+            format!("({:.6}+{:.6}*{k})", prev.pos, next.pos - prev.pos)
+        };
+        expr = format!("if(lt(t,{t1:.4}),{piece},{expr})");
+    }
+    let first = &keyframes[0];
+    format!("if(lt(t,{:.4}),{:.6},{expr})", secs(first), first.pos)
+}
+
+/// The FFmpeg filter that crops a `width`×`height` source along `keyframes` (on `axis`) and
+/// scales the crop to `out` (1080×1920 for export), for a clip read from `start_ms`.
+#[cfg_attr(not(test), allow(dead_code))] // the export (M5)
+pub fn crop_filter(
+    keyframes: &[Keyframe],
+    axis: Axis,
+    (width, height): (u32, u32),
+    start_ms: u64,
+    (out_w, out_h): (u32, u32),
+) -> String {
+    let (cw, ch) = crop_size(width, height);
+    let even = |v: f32| ((v / 2.0).round() as u32 * 2).max(2);
+    let (w, h) = (even(cw * width as f32), even(ch * height as f32));
+    let pos = position_expr(keyframes, start_ms);
+    let (x, y) = match axis {
+        Axis::X => (
+            format!("max(0,min({},{pos}*{width}-{w}/2))", width - w),
+            "0".to_string(),
+        ),
+        Axis::Y => (
+            "0".to_string(),
+            format!("max(0,min({},{pos}*{height}-{h}/2))", height - h),
+        ),
+    };
+    format!("crop=w={w}:h={h}:x='{x}':y='{y}',scale={out_w}:{out_h}:flags=lanczos,setsar=1")
+}
+
 /// Sample ranges between cuts and subject changes.
 fn segments(samples: &[Sample], subjects: &[Option<Subject>]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
@@ -476,7 +533,11 @@ pub(crate) mod tests {
         for case in cases.cases {
             for (t, want) in case.at {
                 let got = position_at(&case.keyframes, t);
-                assert!((got - want).abs() < 1e-6, "{} at {t}: {got} ≠ {want}", case.name);
+                assert!(
+                    (got - want).abs() < 1e-6,
+                    "{} at {t}: {got} ≠ {want}",
+                    case.name
+                );
             }
         }
     }
@@ -707,5 +768,135 @@ pub(crate) mod tests {
                 "{name}: too restless"
             );
         }
+    }
+
+    /// FFmpeg draws the same path as `position_at`, frame by frame, for every shared case:
+    /// a source whose brightness is its x position (a ramp), cropped by `crop_filter`; the
+    /// output's left edge tells where the crop was. FFmpeg 4.4 compatible:
+    /// `cargo test ffmpeg_draws_the_same_path -- --ignored`.
+    #[test]
+    #[ignore]
+    fn ffmpeg_draws_the_same_path() {
+        #[derive(Deserialize)]
+        struct Case {
+            name: String,
+            keyframes: Vec<Keyframe>,
+        }
+        #[derive(Deserialize)]
+        struct Cases {
+            cases: Vec<Case>,
+        }
+        let cases: Cases =
+            serde_json::from_str(include_str!("../../fixtures/reframe/path-cases.json")).unwrap();
+        let (w, h) = (1920u32, 1080u32);
+        let crop_w = 608; // crop_size(1920, 1080), even
+        for case in cases.cases.iter().filter(|c| !c.keyframes.is_empty()) {
+            let filter = crop_filter(&case.keyframes, Axis::X, (w, h), 0, (crop_w, 1080));
+            let output = std::process::Command::new(crate::ffmpeg::locate("ffmpeg").unwrap())
+                .args(["-v", "error", "-f", "lavfi", "-i"])
+                .arg(format!(
+                    "color=s={w}x{h}:r=25:d=5,format=gray,geq=lum='X*255/W'"
+                ))
+                .args(["-vf", &filter, "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}: {}",
+                case.name,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let frame = (crop_w * 1080) as usize;
+            assert_eq!(output.stdout.len(), frame * 125, "{}", case.name);
+            for (i, pixels) in output.stdout.chunks_exact(frame).enumerate() {
+                let t_ms = i as u64 * 40;
+                // The left column's brightness is the crop's left edge (mid-row, 1 px in).
+                let left = pixels[540 * crop_w as usize + 1] as f32 * w as f32 / 255.0;
+                let pos = (left + crop_w as f32 / 2.0) / w as f32;
+                let want = position_at(&case.keyframes, t_ms);
+                assert!(
+                    (pos - want).abs() < 0.008,
+                    "{} at {t_ms} ms: FFmpeg {pos:.4}, Rust {want:.4}",
+                    case.name
+                );
+            }
+        }
+    }
+
+    /// The export's crop (1080×1920) keeps the moving-face fixture's face where the path
+    /// says: the detector finds it in the output, at the expected place:
+    /// `cargo test --release export_crop_frames_the_face -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn export_crop_frames_the_face() {
+        let (p, samples) = fixture_path("moving-face.mp4");
+        let truth: crate::faces::tests::Truth = serde_json::from_slice(
+            &std::fs::read(crate::faces::tests::reframe_fixture("moving-face.json")).unwrap(),
+        )
+        .unwrap();
+        // Export size, then down to 270×480 to read it back.
+        let filter = format!(
+            "{},fps=4:start_time=0:round=up,scale=270:480:flags=area,format=rgb24",
+            crop_filter(&p.keyframes, p.axis, (640, 360), 0, (1080, 1920))
+        );
+        let output = std::process::Command::new(crate::ffmpeg::locate("ffmpeg").unwrap())
+            .args(["-v", "error", "-i"])
+            .arg(crate::faces::tests::reframe_fixture("moving-face.mp4"))
+            .args(["-vf", &filter, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut detector =
+            crate::faces::Detector::load(&crate::faces::tests::face_model()).unwrap();
+        let frame = 270 * 480 * 3;
+        let jumps: Vec<u64> = p
+            .keyframes
+            .iter()
+            .filter(|k| k.jump)
+            .map(|k| k.t_ms)
+            .collect();
+        let (mut checked, mut worst) = (0, 0.0f32);
+        for (i, rgb) in output
+            .stdout
+            .chunks_exact(frame)
+            .enumerate()
+            .take(samples.len())
+        {
+            let t = i as u64 * 250;
+            let Some(want) = truth.samples[i].faces.first() else {
+                continue;
+            };
+            if jumps.iter().any(|&j| t.abs_diff(j) <= 250) {
+                continue; // a frame either side of a cut may show the other shot
+            }
+            // Where the true face centre lands in the output (0–1 of its width).
+            let left = position_at(&p.keyframes, t) - p.crop.0 / 2.0;
+            let expected = ((want.bbox[0] + want.bbox[2]) / 2.0 / 640.0 - left) / p.crop.0;
+            let faces = detector
+                .detect(crate::faces::Rgb {
+                    data: rgb,
+                    width: 270,
+                    height: 480,
+                })
+                .unwrap();
+            assert!(!faces.is_empty(), "no face in the export at {t} ms");
+            let got = faces[0].center()[0] / 270.0;
+            worst = worst.max((got - expected).abs());
+            assert!(
+                (got - expected).abs() < 0.08,
+                "at {t} ms: face at {got:.3}, expected {expected:.3}"
+            );
+            assert!((0.0..=1.0).contains(&got));
+            checked += 1;
+        }
+        println!(
+            "checked {checked} frames, worst offset {:.1}% of the width",
+            worst * 100.0
+        );
+        assert!(checked > 30);
     }
 }
