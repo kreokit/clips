@@ -1,6 +1,8 @@
 //! KreoKit Clips: long video → vertical short clips with captions, offline.
 
 mod analysis;
+#[cfg_attr(not(test), allow(dead_code))] // the caption export (M5 step 5)
+mod ass;
 mod audio;
 mod awake;
 mod captions;
