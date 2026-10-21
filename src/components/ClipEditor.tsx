@@ -34,13 +34,27 @@ import {
   snapTargets,
   wordIndexAt,
 } from "../lib/clipEdit";
-import { Clip, SpokenText, applyScores, manualClip, scoreClips, spokenText, tiktokWarning } from "../lib/clips";
+import { Clip, CropMode, Framing, SpokenText, applyScores, manualClip, scoreClips, spokenText, tiktokWarning } from "../lib/clips";
+import { useCropPath } from "../lib/faces";
+import {
+  centerPath,
+  cropPlacement,
+  fitPlacement,
+  framingKeyframes,
+  lowResolution,
+  portraitBox,
+  positionAt,
+  removeKeyframe,
+  seedManual,
+  setKeyframe,
+} from "../lib/reframe";
 import { Project, formatDuration } from "../lib/projects";
 import { SNAP_PX, View, clampView, follow, msAt, tickLabel, tickStep, xAt, zoomAt } from "../lib/timeline";
 import { normalized } from "../lib/transcription";
 import { useProject } from "../store/project";
 import { Button, IconButton, Popover, toast } from "../ui";
 import { WhyThisClip } from "./ClipsBoard";
+import { FramingPanel } from "./FramingPanel";
 import "../styles/editor.css";
 
 /** Peaks per second from `waveform_range` (src-tauri/src/waveform.rs). */
@@ -51,9 +65,9 @@ const WAVEFORM_MARGIN_MS = 30_000;
 const CLICK_PX = 3;
 
 /**
- * Edits one clip: the source video (16:9 here; the 9:16 preview comes with reframing),
- * the clip's words with a sentence of context, and a timeline with in/out handles that
- * snap to sentence and word edges. New clips: at the playhead (N) or from selected words.
+ * Edits one clip: the 9:16 preview with its framing (follow the face, centre, fit + blur,
+ * or the user's crop points), the clip's words with a sentence of context, and a timeline
+ * with in/out handles that snap to sentence and word edges. New clips: at the playhead (N) or from selected words.
  * Keys: Space plays the clip, I / O set the in / out point at the playhead, [ / ] go to
  * the previous / next clip, K keeps, X discards, Escape goes back to the board.
  */
@@ -86,6 +100,34 @@ export function ClipEditor({
 
   const clip = project.clips.find((c) => c.id === clipId);
   const durationMs = project.video.duration_ms;
+  // The automatic crop path follows the saved in/out points (not every drag step).
+  const [pathState, retryPath] = useCropPath(project.id, clip?.in_ms ?? 0, clip?.out_ms ?? 0);
+  const area = useRef<HTMLDivElement>(null);
+  const blur = useRef<HTMLCanvasElement>(null);
+  const [areaSize, setAreaSize] = useState({ width: 0, height: 0 });
+  // Counts loaded / sought frames, so the overview redraws even when the time is the same.
+  const [frames, setFrames] = useState(0);
+
+  // Redraws the overview (and Fit + blur's background) after a seek or load, a few times:
+  // WebKit may not have the new frame ready to draw yet (drawing then gives black), and
+  // macOS 12's WebKit has no requestVideoFrameCallback to say when it is.
+  const redraws = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const frameShown = useCallback(() => {
+    redraws.current.forEach(clearTimeout);
+    setFrames((n) => n + 1);
+    redraws.current = [100, 300, 700, 1500].map((ms) => setTimeout(() => setFrames((n) => n + 1), ms));
+  }, []);
+  useEffect(() => () => redraws.current.forEach(clearTimeout), []);
+
+  useLayoutEffect(() => {
+    const el = area.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setAreaSize({ width: entry.contentRect.width, height: entry.contentRect.height }),
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const index = order.indexOf(clipId);
   const shown: Range | null = draft ?? (clip ? { in_ms: clip.in_ms, out_ms: clip.out_ms } : null);
 
@@ -196,6 +238,15 @@ export function ClipEditor({
     [clipId, update],
   );
 
+  const setFraming = useCallback(
+    (framing: Framing) => {
+      const p = useProject.getState().project;
+      if (!p) return;
+      update({ clips: p.clips.map((c) => (c.id === clipId ? { ...c, framing } : c)) });
+    },
+    [clipId, update],
+  );
+
   const setStatus = useCallback(
     (status: Clip["status"]) => {
       const p = useProject.getState().project;
@@ -272,8 +323,47 @@ export function ClipEditor({
     return () => window.removeEventListener("keydown", onKey);
   }, [shown, text, durationMs, currentMs, index, order, onOpen, onClose, playClip, commit, setStatus, newClipHere]);
 
+  const source = { width: project.video.width, height: project.video.height };
+  const auto = pathState.kind === "ready" ? pathState.path : null;
+  const geometry = auto ?? centerPath(source.width, source.height, 0);
+  const span = geometry.axis === "x" ? geometry.crop[0] : geometry.crop[1];
+  const keys = clip ? framingKeyframes(clip.framing, auto, clip.in_ms) : null;
+  const pos = keys ? positionAt(keys, currentMs) : null;
+  const box = portraitBox(areaSize);
+  const placement =
+    pos === null ? fitPlacement(source, box) : cropPlacement(source, box, geometry.axis, pos);
+
+  // Fit + blur: a small copy of the frame behind the video, blurred by CSS.
+  useEffect(() => {
+    const el = blur.current;
+    const v = video.current;
+    const ctx = el?.getContext("2d");
+    if (!el || !v || !ctx || v.readyState < 2) return;
+    el.width = 54;
+    el.height = 96;
+    const scale = Math.max(54 / v.videoWidth, 96 / v.videoHeight);
+    const w = v.videoWidth * scale;
+    const h = v.videoHeight * scale;
+    ctx.drawImage(v, (54 - w) / 2, (96 - h) / 2, w, h);
+  }, [currentMs, frames, pos === null, box.width]);
+
   if (!clip || !shown) return null;
   const length = shown.out_ms - shown.in_ms;
+
+  const onMode = (mode: CropMode) => {
+    if (mode === "manual" && clip.framing.manual.length === 0) {
+      setFraming({ mode, manual: seedManual(auto, clip) });
+    } else setFraming({ ...clip.framing, mode });
+  };
+  const onDrag = (to: number) => {
+    const from =
+      clip.framing.mode === "manual"
+        ? clip.framing.manual
+        : clip.framing.mode === "track"
+          ? seedManual(auto, clip)
+          : [{ t_ms: clip.in_ms, pos: 0.5, jump: false, ease: false }];
+    setFraming({ mode: "manual", manual: setKeyframe(from, currentMs, to, span) });
+  };
   const note = lengthNote(length, project.finder);
   const tiktok = tiktokWarning(length, project.finder) !== null;
   const m = clip.moment;
@@ -351,23 +441,47 @@ export function ClipEditor({
       <div className="editor-main">
         <div className="editor-player">
           <div className="editor-stage">
-            <video
-              ref={video}
-              src={convertFileSrc(project.video_path)}
-              playsInline
-              preload="auto"
-              onClick={playClip}
-              onLoadedMetadata={() => {
-                setVideoError(false);
-                seek(clip.in_ms);
-              }}
-              onError={() => setVideoError(true)}
+            <div className="portrait-area" ref={area}>
+              <div className="portrait" style={{ width: box.width, height: box.height }}>
+                {pos === null && <canvas ref={blur} className="portrait-blur" aria-hidden />}
+                <video
+                  ref={video}
+                  src={convertFileSrc(project.video_path)}
+                  playsInline
+                  preload="auto"
+                  onClick={playClip}
+                  style={placement}
+                  onLoadedMetadata={() => {
+                    setVideoError(false);
+                    seek(clip.in_ms);
+                  }}
+                  onLoadedData={frameShown}
+                  onSeeked={frameShown}
+                  onError={() => setVideoError(true)}
+                />
+              </div>
+              {videoError && (
+                <p className="editor-video-error">
+                  This video can't be previewed here. MP4 and MOV (H.264) play best; the clips are still found and exported from the original.
+                </p>
+              )}
+            </div>
+            <FramingPanel
+              framing={clip.framing}
+              pathState={pathState}
+              video={video.current}
+              source={source}
+              axis={geometry.axis}
+              span={span}
+              pos={pos}
+              currentMs={currentMs}
+              frameKey={`${currentMs}:${frames}`}
+              lowRes={lowResolution(source.width, source.height)}
+              onMode={onMode}
+              onDrag={onDrag}
+              onRemoveKeyframe={() => setFraming({ ...clip.framing, manual: removeKeyframe(clip.framing.manual, currentMs) })}
+              onRetry={retryPath}
             />
-            {videoError && (
-              <p className="editor-video-error">
-                This video can't be previewed here. MP4 and MOV (H.264) play best; the clips are still found and exported from the original.
-              </p>
-            )}
           </div>
           <div className="editor-controls">
             <IconButton icon={playing ? Pause : Play} label={playing ? "Pause" : "Play clip"} shortcut="Space" onClick={playClip} />
@@ -397,6 +511,7 @@ export function ClipEditor({
         onSeek={seek}
         onDraft={setDraft}
         onCommit={(r) => void commit(r)}
+        keyframes={clip.framing.mode === "manual" ? clip.framing.manual.map((k) => k.t_ms) : []}
       />
     </div>
   );
@@ -522,6 +637,7 @@ function ClipTimeline({
   onSeek,
   onDraft,
   onCommit,
+  keyframes,
 }: {
   projectId: string;
   clipKey: number;
@@ -533,6 +649,8 @@ function ClipTimeline({
   onSeek: (ms: number) => void;
   onDraft: (r: Range | null) => void;
   onCommit: (r: Range) => void;
+  /** Manual crop points (video clock), shown on the track. */
+  keyframes: number[];
 }) {
   const body = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -699,6 +817,9 @@ function ClipTimeline({
             <span className="timeline-block-text">{formatDuration(clip.out_ms - clip.in_ms)}</span>
             <span className="timeline-block-edge end" />
           </div>
+          {keyframes.map((t) => (
+            <span key={t} className="timeline-keyframe" style={{ left: xAt(t, view) }} title="Crop point" aria-hidden />
+          ))}
         </div>
         {playheadX >= 0 && playheadX <= width && <div className="timeline-playhead" style={{ left: playheadX }} />}
       </div>
