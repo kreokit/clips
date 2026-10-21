@@ -202,8 +202,6 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 
 - **Punctuation recovery** for stretches Whisper left unpunctuated (the pause fallback finds about one sentence end in seven there); e.g. re-run such a part with a punctuated prompt.
 
-- **Cutout's model releases** (user, 2026-10-21): mark `kreokit/cutout`'s `models-v1` and `models-v2` as pre-releases too (as done for Clips at M6), after checking Cutout downloads only by tag (it does: `…/releases/download/models-vN/…`), so the model mirror never shows as the main download ("Latest").
-
 - **Audio offset per project** (user, 2026-10-21): a setting of ±2 s, applied in the preview and the export, for source files whose sound is out of sync with the picture (seen in a downloaded file during the M4 test; not KreoKit's doing).
 
 - **Mouth movement for the active speaker** (M4, not measurable then; stays in the backlog, user 2026-10-21): needs a free-licensed two-person clip with sound at ≥ 720p as truth, and mouth crops from full-resolution frames (640×360 samples give ~12 px mouths). Keep it on a branch unless it clearly beats "biggest face + hysteresis".
