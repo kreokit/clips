@@ -40,3 +40,13 @@ export interface Style {
   pos_x: number | null;
   pos_y: number | null;
 }
+
+/** A corrected word, on the video's clock (src-tauri/src/captions.rs `WordFix`): it
+ * applies wherever that word shows; an empty `text` hides the word. */
+export interface WordFix {
+  /** The word's start in the transcript; with `was` it identifies the word. */
+  start_ms: number;
+  /** The word as Whisper wrote it. */
+  was: string;
+  text: string;
+}

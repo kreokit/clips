@@ -3,6 +3,7 @@
 mod analysis;
 mod audio;
 mod awake;
+mod captions;
 mod chunks;
 mod cpu;
 mod faces;
@@ -511,6 +512,23 @@ async fn transcript_text(
     .await
 }
 
+/// A clip's captions on its own clock, with the project's word fixes (see captions.rs).
+#[tauri::command]
+async fn clip_captions(
+    app: AppHandle,
+    id: String,
+    settings: Settings,
+    fixes: Vec<captions::WordFix>,
+    in_ms: u64,
+    out_ms: u64,
+) -> Result<Vec<style::Segment>, String> {
+    blocking(move || {
+        let text = sentences::split(&finished(&app, &id, &settings)?.1.transcript);
+        Ok(captions::clip_captions(&text, &fixes, in_ms, out_ms))
+    })
+    .await
+}
+
 /// Proposes clips: as many as the finder settings ask for minus the `have` clips already
 /// counted on the board, none overlapping `avoid`.
 #[tauri::command]
@@ -637,6 +655,7 @@ pub fn run() {
             cancel_faces,
             reframe_path,
             transcript_text,
+            clip_captions,
             find_moments,
             score_clips,
             remember_finder,

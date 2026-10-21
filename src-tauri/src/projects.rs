@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::captions::WordFix;
 use crate::ffmpeg;
 use crate::moments::{FinderSettings, Moment};
 use crate::probe::VideoInfo;
@@ -62,6 +63,9 @@ pub struct Project {
     /// The caption look of every clip in the project (milestone 5).
     #[serde(default)]
     pub style: Style,
+    /// Words the user corrected in the captions; they apply to every clip.
+    #[serde(default)]
+    pub word_fixes: Vec<WordFix>,
     /// Unix milliseconds.
     pub created_at: u64,
     pub opened_at: u64,
@@ -413,6 +417,7 @@ pub fn open_video(
         finder: last_finder(root),
         clips: Vec::new(),
         style: Style::default(),
+        word_fixes: Vec::new(),
         created_at: now,
         opened_at: now,
         updated_at: now,

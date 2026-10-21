@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Segment, WordFix } from "./captions/types";
 import type { Project, TranscriptionSettings } from "./projects";
 import { normalized } from "./transcription";
 
@@ -155,6 +156,16 @@ type Range = [number, number];
 
 export const transcriptText = (id: string, settings: TranscriptionSettings) =>
   invoke<SpokenText>("transcript_text", { id, settings });
+
+/** A clip's captions on its own clock (0 = its in point), with the project's word fixes
+ * (src-tauri/src/captions.rs). Preview and export use the same ones. */
+export const clipCaptions = (
+  id: string,
+  settings: TranscriptionSettings,
+  fixes: WordFix[],
+  inMs: number,
+  outMs: number,
+) => invoke<Segment[]>("clip_captions", { id, settings, fixes, inMs, outMs });
 
 export const findMoments = (id: string, settings: TranscriptionSettings, finder: FinderSettings, avoid: Range[], have: number) =>
   invoke<Moment[]>("find_moments", { id, settings, finder, avoid, have });

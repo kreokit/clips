@@ -109,6 +109,8 @@ export function ProjectView() {
       return toast(`Couldn't remove the transcript: ${String(e)}`, "error");
     }
     forgetSpokenText(project.id);
+    // Fixes name words of the old transcript; the dialog said they'd be lost.
+    update({ word_fixes: [] });
     setEditing(null);
     setTranscript(null);
     setPanelKey((k) => k + 1);
@@ -208,6 +210,9 @@ export function ProjectView() {
           <p className="dialog-text">
             The current transcript is deleted and you can choose the settings for a new one. Your clips stay; they're scored again
             when the new transcript is done.
+            {project.word_fixes.length > 0 && (
+              <> Your {project.word_fixes.length === 1 ? "word fix" : `${project.word_fixes.length} word fixes`} in the captions will be lost.</>
+            )}
           </p>
         </Dialog>
       )}
