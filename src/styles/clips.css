@@ -107,6 +107,23 @@
   object-fit: cover;
 }
 
+/* Outside the 9:16 crop: a flat dark band either side. */
+.clip-crop-band {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.clip-crop-tag {
+  position: absolute;
+  left: var(--space-2);
+  bottom: var(--space-2);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.7);
+  font: var(--text-meta);
+  color: var(--color-text);
+}
+
 .clip-score,
 .clip-length,
 .clip-kept {

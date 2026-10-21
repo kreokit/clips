@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Dropped, FaceQueue } from "./faceQueue";
+import type { Clip } from "./clips";
 import type { CropPath } from "./reframe";
 
 /** The app's one face-analysis queue (lib.rs `analyze_faces`). */
@@ -71,4 +72,44 @@ export function useCropPath(projectId: string, inMs: number, outMs: number): [Pa
   }, [projectId, inMs, outMs, attempt]);
 
   return [state, () => setAttempt((a) => a + 1)];
+}
+
+export type KeptFaces = Map<number, { kind: "finding" } | { kind: "ready"; path: CropPath } | { kind: "error" }>;
+
+/**
+ * Kept clips are analysed in the background (decided 2026-10-21), through the queue; the
+ * clip open in the editor still goes first. Returns each kept clip's state.
+ */
+export function useKeptFaces(projectId: string, clips: Clip[]): KeptFaces {
+  const [states, setStates] = useState<KeptFaces>(new Map());
+  const kept = clips.filter((c) => c.status === "kept");
+  const key = JSON.stringify(kept.map((c) => [c.id, c.in_ms, c.out_ms]));
+
+  useEffect(() => {
+    let live = true;
+    const set = (id: number, state: KeptFaces extends Map<number, infer V> ? V : never) =>
+      live && setStates((m) => new Map(m).set(id, state));
+    setStates((m) => new Map([...m].filter(([id]) => kept.some((c) => c.id === id))));
+    for (const clip of kept) {
+      void (async () => {
+        try {
+          const cached = await reframePath(projectId, clip.in_ms, clip.out_ms);
+          if (cached) return set(clip.id, { kind: "ready", path: cached });
+          set(clip.id, { kind: "finding" });
+          await faceQueue.request(projectId, [[clip.in_ms, clip.out_ms]], "background");
+          const path = await reframePath(projectId, clip.in_ms, clip.out_ms);
+          set(clip.id, path ? { kind: "ready", path } : { kind: "error" });
+        } catch (e) {
+          if (!(e instanceof Dropped)) set(clip.id, { kind: "error" });
+        }
+      })();
+    }
+    return () => {
+      live = false;
+    };
+    // `key` stands for the kept clips' ids and ranges.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, key]);
+
+  return states;
 }

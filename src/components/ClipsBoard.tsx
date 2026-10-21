@@ -34,6 +34,8 @@ import {
   withMoments,
 } from "../lib/clips";
 import { Project, formatDuration } from "../lib/projects";
+import { KeptFaces, useKeptFaces } from "../lib/faces";
+import { Axis, CropPath, centerPath, framingKeyframes, positionAt } from "../lib/reframe";
 import { limiter } from "../lib/queue";
 import { normalized } from "../lib/transcription";
 import { useProject } from "../store/project";
@@ -66,6 +68,10 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
   const [error, setError] = useState<string | null>(null);
   const [why, setWhy] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Kept clips: faces found in the background, for their crop on the card.
+  const faces = useKeptFaces(project.id, project.clips);
+  // The crop's size and axis, from the video's size.
+  const geometry = centerPath(project.video.width, project.video.height, 0);
   const settingsButton = useRef<HTMLButtonElement>(null);
   const grid = useRef<HTMLDivElement>(null);
   const triedFirst = useRef(false);
@@ -240,6 +246,8 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
             key={c.id}
             clip={c}
             projectId={project.id}
+            faces={faces.get(c.id)}
+            geometry={geometry}
             warning={tiktokWarning(clipLength(c), project.finder)}
             number={i + 1}
             selected={c.id === selected}
@@ -279,6 +287,8 @@ function emptyNote(filter: ClipFilter): string {
 function ClipCard({
   clip,
   projectId,
+  faces,
+  geometry,
   warning,
   number,
   selected,
@@ -291,6 +301,10 @@ function ClipCard({
 }: {
   clip: Clip;
   projectId: string;
+  /** A kept clip's face analysis. */
+  faces?: KeptFaces extends Map<number, infer V> ? V : never;
+  /** The crop's size and axis for this video. */
+  geometry: CropPath;
   /** The TikTok Rewards warning, for clips under 61 s. */
   warning: string | null;
   number: number;
@@ -307,6 +321,27 @@ function ClipCard({
   const m = clip.moment;
   const kept = clip.status === "kept";
   const discarded = clip.status === "discarded";
+  const thumbMs = clip.in_ms + 300;
+  // The 9:16 crop at the thumbnail's time, once the faces are known (or not needed).
+  const path = faces?.kind === "ready" ? faces.path : null;
+  const needsFaces = clip.framing.mode === "track";
+  const crop: CropMark | null =
+    clip.framing.mode === "fit_blur"
+      ? "fit"
+      : needsFaces && !path
+        ? null
+        : (() => {
+            const keys = framingKeyframes(clip.framing, path, clip.in_ms);
+            const { axis, crop: size } = path ?? geometry;
+            const span = axis === "x" ? size[0] : size[1];
+            return keys ? { axis, span, pos: positionAt(keys, thumbMs) } : null;
+          })();
+  const facesNote =
+    needsFaces && faces?.kind === "finding"
+      ? " · finding faces…"
+      : needsFaces && path?.no_face
+        ? " · no face, center crop"
+        : "";
   return (
     <div
       className={["clip-card", selected && "selected", kept && "kept", discarded && "discarded"].filter(Boolean).join(" ")}
@@ -320,7 +355,7 @@ function ClipCard({
       onDoubleClick={onEdit}
     >
       <div className="clip-thumb">
-        <ClipThumb projectId={projectId} ms={clip.in_ms + 300} />
+        <ClipThumb projectId={projectId} ms={thumbMs} crop={crop} />
         {m && (
           <span className="clip-score tabular" title="Score out of 100">
             {m.score}
@@ -338,6 +373,7 @@ function ClipCard({
           {clipRange(clip, formatDuration)}
           {clip.source === "manual" && " · added by you"}
           {clip.edited && clip.source === "found" && " · edited"}
+          {facesNote}
         </span>
         {warning && (
           <span className="clip-warning">
@@ -397,7 +433,10 @@ function ClipCard({
   );
 }
 
-function ClipThumb({ projectId, ms }: { projectId: string; ms: number }) {
+/** Where the 9:16 crop sits on a card's thumbnail, or "fit" for Fit + blur. */
+type CropMark = { axis: Axis; span: number; pos: number } | "fit";
+
+function ClipThumb({ projectId, ms, crop }: { projectId: string; ms: number; crop: CropMark | null }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -410,8 +449,25 @@ function ClipThumb({ projectId, ms }: { projectId: string; ms: number }) {
       live = false;
     };
   }, [projectId, ms]);
+  // The frame dimmed outside the crop (two flat bands), like the editor's overview.
+  const bands =
+    crop && crop !== "fit"
+      ? crop.axis === "x"
+        ? [
+            { left: 0, top: 0, width: `${(crop.pos - crop.span / 2) * 100}%`, height: "100%" },
+            { right: 0, top: 0, width: `${(1 - crop.pos - crop.span / 2) * 100}%`, height: "100%" },
+          ]
+        : [
+            { left: 0, top: 0, width: "100%", height: `${(crop.pos - crop.span / 2) * 100}%` },
+            { left: 0, bottom: 0, width: "100%", height: `${(1 - crop.pos - crop.span / 2) * 100}%` },
+          ]
+      : [];
   return (
-    <span className="thumb clip-thumb-image">{src ? <img src={src} alt="" /> : <Film size={22} strokeWidth={1.75} aria-hidden />}</span>
+    <span className="thumb clip-thumb-image">
+      {src ? <img src={src} alt="" /> : <Film size={22} strokeWidth={1.75} aria-hidden />}
+      {src && bands.map((style, i) => <span key={i} className="clip-crop-band" style={style} aria-hidden />)}
+      {src && crop === "fit" && <span className="clip-crop-tag">Fit + blur</span>}
+    </span>
   );
 }
 
