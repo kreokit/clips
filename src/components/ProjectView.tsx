@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, RotateCcw, Trash2 } from "lucide-react";
 import { applyScores, forgetSpokenText, scoreClips } from "../lib/clips";
+import { faceQueue } from "../lib/faces";
 import { describeShape, discardTranscript, fileName, formatBytes, formatDuration, formatFps } from "../lib/projects";
 import { closeProject, deleteOpenProject, useProject } from "../store/project";
 import { Transcript, cancelJob, normalized } from "../lib/transcription";
@@ -46,6 +47,14 @@ export function ProjectView() {
   // A new key remounts the Transcribe panel, so it reads the (now missing) transcript.
   const [panelKey, setPanelKey] = useState(0);
   const onRunningChange = useCallback((r: boolean) => setRunning(r), []);
+  // Leaving a project stops its face analysis (finished blocks stay cached).
+  const projectId = project?.id;
+  useEffect(
+    () => () => {
+      if (projectId) faceQueue.clear(projectId);
+    },
+    [projectId],
+  );
   const onTranscript = useCallback((t: Transcript | null, fresh: boolean) => {
     setTranscript(t);
     if (t && fresh) {

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { TranscriptionSettings, WhisperModel, formatBytes, formatDuration } from "./projects";
+import { faceQueue } from "./faces";
 
 /** src-tauri/src/models.rs `ModelSource`: where a ready model is. */
 export type ModelSource = "ours" | "captions";
@@ -89,6 +90,8 @@ export async function transcribe(
     return await invoke<Transcript>("transcribe", { id, settings });
   } finally {
     unlisten();
+    // Face analysis waits for transcriptions; it can go on now.
+    faceQueue.retrySoon();
   }
 }
 
