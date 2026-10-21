@@ -18,7 +18,7 @@ mod waveform;
 #[cfg(test)]
 mod wer;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -65,6 +65,17 @@ async fn list_projects(app: AppHandle) -> Result<Vec<ProjectEntry>, String> {
     blocking(move || Ok(projects::list(&root))).await
 }
 
+/// Brings a project's transcript made before audio padding onto the video's clock, with
+/// its clips (`transcription::upgrade`); the video is probed only for such a transcript.
+fn upgrade(root: &Path, project: Project) -> Result<Project, String> {
+    let dir = projects::project_dir(root, &project.id)?.join("transcript");
+    let video = PathBuf::from(&project.video_path);
+    match transcription::upgrade(&dir, || probe::audio_start_ms(&video))? {
+        Some(ms) => projects::shift_clips(root, project, ms),
+        None => Ok(project),
+    }
+}
+
 /// Lets the webview play the project's video (the asset protocol serves only files
 /// allowed this way, besides the thumbnails).
 fn allow_video(app: &AppHandle, project: Project) -> Result<Project, String> {
@@ -85,6 +96,7 @@ async fn open_video(app: AppHandle, path: String) -> Result<Project, String> {
             probe::probe_video,
             projects::now_ms(),
         )
+        .and_then(|p| upgrade(&root, p))
     })
     .await?;
     allow_video(&app, project)
@@ -94,7 +106,10 @@ async fn open_video(app: AppHandle, path: String) -> Result<Project, String> {
 #[tauri::command]
 async fn open_project(app: AppHandle, id: String) -> Result<Project, String> {
     let root = projects_root(&app)?;
-    let project = blocking(move || projects::open(&root, &id, projects::now_ms())).await?;
+    let project = blocking(move || {
+        projects::open(&root, &id, projects::now_ms()).and_then(|p| upgrade(&root, p))
+    })
+    .await?;
     allow_video(&app, project)
 }
 
@@ -116,6 +131,7 @@ async fn locate_video(app: AppHandle, id: String, path: String) -> Result<Projec
             probe::probe_video,
             projects::now_ms(),
         )
+        .and_then(|p| upgrade(&root, p))
     })
     .await?;
     allow_video(&app, project)

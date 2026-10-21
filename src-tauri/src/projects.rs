@@ -226,6 +226,29 @@ fn write_project(dir: &Path, project: &Project) -> Result<(), String> {
     write_atomic(&dir.join(PROJECT_FILE), (json + "\n").as_bytes())
 }
 
+/// Moves the project's clips `ms` later (with its transcript, see
+/// `transcription::upgrade`), within the video, and saves it.
+pub fn shift_clips(root: &Path, project: Project, ms: u64) -> Result<Project, String> {
+    let end = project.video.duration_ms;
+    let later = |t: u64| (t + ms).min(end);
+    let clips = project
+        .clips
+        .into_iter()
+        .map(|c| Clip {
+            in_ms: later(c.in_ms),
+            out_ms: later(c.out_ms),
+            moment: c.moment.map(|mut m| {
+                (m.in_ms, m.out_ms) = (later(m.in_ms), later(m.out_ms));
+                m
+            }),
+            ..c
+        })
+        .collect();
+    let project = Project { clips, ..project };
+    write_project(&project_dir(root, &project.id)?, &project)?;
+    Ok(project)
+}
+
 /// Every readable project, most recently opened first. Damaged folders are skipped.
 fn all(root: &Path) -> Vec<Project> {
     let mut projects: Vec<Project> = fs::read_dir(root)
@@ -441,6 +464,7 @@ mod tests {
             fps: 30.0,
             rotation: 0,
             has_audio,
+            audio_start_ms: 0,
         }
     }
 
@@ -569,6 +593,30 @@ mod tests {
         let old = load(&root, &p.id).unwrap();
         assert!(old.clips.is_empty());
         assert_eq!(old.finder, FinderSettings::default());
+    }
+
+    #[test]
+    fn clips_move_with_an_upgraded_transcript() {
+        let (root, video) = setup("shift");
+        let p = open_video(&root, &video, probe_ok, 1).unwrap();
+        let end = p.video.duration_ms;
+        let clip = |id, in_ms, out_ms| Clip {
+            id,
+            in_ms,
+            out_ms,
+            status: ClipStatus::Proposed,
+            source: ClipSource::Found,
+            edited: false,
+            moment: None,
+        };
+        let p = Project {
+            clips: vec![clip(1, 1_000, 31_000), clip(2, end - 20_000, end - 300)],
+            ..p
+        };
+        let shifted = shift_clips(&root, p, 677).unwrap();
+        let ranges: Vec<_> = shifted.clips.iter().map(|c| (c.in_ms, c.out_ms)).collect();
+        assert_eq!(ranges, [(1_677, 31_677), (end - 19_323, end)]);
+        assert_eq!(load(&root, &shifted.id).unwrap().clips, shifted.clips);
     }
 
     #[test]

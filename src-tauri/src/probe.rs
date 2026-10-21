@@ -20,6 +20,11 @@ pub struct VideoInfo {
     pub rotation: u32,
     /// Whether there is an audio stream. Without one there is nothing to transcribe.
     pub has_audio: bool,
+    /// How long after the video's 0:00 the first audio stream starts (0 when it starts
+    /// first). The decoder pads this with silence (`audio.rs`). Projects saved before it
+    /// existed read 0; [`audio_start_ms`] probes it for them.
+    #[serde(default)]
+    pub audio_start_ms: u64,
 }
 
 pub fn probe_video(path: &Path) -> Result<VideoInfo, String> {
@@ -62,6 +67,7 @@ struct FfprobeOutput {
 #[derive(Deserialize)]
 struct FfprobeStream {
     codec_type: Option<String>,
+    start_time: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
     avg_frame_rate: Option<String>,
@@ -94,6 +100,20 @@ struct SideData {
 #[derive(Deserialize)]
 struct FfprobeFormat {
     duration: Option<String>,
+    start_time: Option<String>,
+}
+
+fn seconds(value: &Option<String>) -> Option<f64> {
+    value
+        .as_deref()?
+        .parse::<f64>()
+        .ok()
+        .filter(|s| s.is_finite())
+}
+
+/// Just [`VideoInfo::audio_start_ms`], for projects saved before it was recorded.
+pub fn audio_start_ms(path: &Path) -> Result<u64, String> {
+    probe_video(path).map(|info| info.audio_start_ms)
 }
 
 /// Parses the JSON printed by the ffprobe invocation in [`probe_video`].
@@ -111,10 +131,17 @@ pub fn parse_ffprobe_json(json: &str) -> Result<VideoInfo, String> {
                 && s.disposition.as_ref().is_none_or(|d| d.attached_pic == 0)
         })
         .ok_or("the file has no video stream")?;
-    let has_audio = parsed
+    let audio = parsed
         .streams
         .iter()
-        .any(|s| s.codec_type.as_deref() == Some("audio"));
+        .find(|s| s.codec_type.as_deref() == Some("audio"));
+    let has_audio = audio.is_some();
+    // ffmpeg puts the earliest stream at 0:00 (the container's start time), like players.
+    let start = parsed.format.as_ref().and_then(|f| seconds(&f.start_time));
+    let audio_start_ms = match (audio.and_then(|a| seconds(&a.start_time)), start) {
+        (Some(a), Some(start)) => ((a - start) * 1000.0).round().max(0.0) as u64,
+        _ => 0,
+    };
 
     let (coded_width, coded_height) = stream
         .width
@@ -160,6 +187,7 @@ pub fn parse_ffprobe_json(json: &str) -> Result<VideoInfo, String> {
         fps,
         rotation,
         has_audio,
+        audio_start_ms,
     })
 }
 
@@ -218,6 +246,29 @@ mod tests {
     }
 
     #[test]
+    fn audio_starting_after_the_video() {
+        let json = |audio: &str, format: &str| {
+            format!(
+                r#"{{"streams": [{{ "codec_type": "video", "width": 640, "height": 360,
+                                   "avg_frame_rate": "25/1", "start_time": "{format}" }},
+                                 {{ "codec_type": "audio", "start_time": "{audio}" }}],
+                    "format": {{ "duration": "10.0", "start_time": "{format}" }}}}"#
+            )
+        };
+        let start = |audio, format| {
+            parse_ffprobe_json(&json(audio, format))
+                .unwrap()
+                .audio_start_ms
+        };
+        assert_eq!(start("0.676780", "0.000000"), 677);
+        // Measured from the container's start, as ffmpeg does.
+        assert_eq!(start("1.900000", "1.400000"), 500);
+        // Audio first (encoder delay): nothing to pad.
+        assert_eq!(start("-0.021333", "-0.021333"), 0);
+        assert_eq!(parse_ffprobe_json(SAMPLE).unwrap().audio_start_ms, 0);
+    }
+
+    #[test]
     fn falls_back_to_r_frame_rate_and_stream_duration() {
         let json = r#"{
             "streams": [{ "codec_type": "video", "width": 720, "height": 1280,
@@ -234,6 +285,7 @@ mod tests {
                 fps: 25.0,
                 rotation: 0,
                 has_audio: false,
+                audio_start_ms: 0,
             }
         );
     }
@@ -368,6 +420,7 @@ mod tests {
                 fps: 24.0,
                 rotation: 0,
                 has_audio: false,
+                audio_start_ms: 0,
             }
         );
     }

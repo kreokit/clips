@@ -55,6 +55,10 @@ impl AudioStream {
             .arg("-i")
             .arg(video)
             .args(["-vn", "-ac", "1", "-ar", &SAMPLE_RATE.to_string()])
+            // Silence before audio that starts after the video (phone and screen
+            // recordings, edited exports), so sample 0 is the video's 0:00 and word times
+            // match the player's clock; samples before 0:00 (encoder delay) are dropped.
+            .args(["-af", "aresample=async=1:first_pts=0"])
             .args(["-f", "f32le", "-acodec", "pcm_f32le", "pipe:1"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -280,6 +284,60 @@ pub(crate) mod tests {
             .map(|(a, b)| (a - b).abs())
             .sum();
         assert!(diff < 1.0, "{diff}");
+    }
+
+    /// hello.mp4 with its sound `seconds` later than its picture (needs FFmpeg).
+    pub(crate) fn late_audio_fixture(name: &str, seconds: f64) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kreokit-clips-late-audio-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("late.mp4");
+        let hello = fixture("hello.mp4");
+        let status = Command::new(ffmpeg::locate("ffmpeg").unwrap())
+            .args(["-nostdin", "-v", "error", "-y", "-i"])
+            .arg(&hello)
+            .args(["-itsoffset", &seconds.to_string(), "-i"])
+            .arg(&hello)
+            .args(["-map", "0:v", "-map", "1:a", "-c", "copy"])
+            .arg(&out)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        out
+    }
+
+    /// Index of the first sample that isn't quiet.
+    fn onset(samples: &[f32]) -> usize {
+        samples.iter().position(|s| s.abs() > 0.05).unwrap()
+    }
+
+    /// Words must land on the player's clock: audio that starts after the picture is
+    /// padded with silence, also when reading from a time.
+    #[test]
+    #[ignore]
+    fn audio_starting_late_is_padded_to_the_video_clock() {
+        let late = late_audio_fixture("pad", 0.7);
+        let start_ms = crate::probe::probe_video(&late).unwrap().audio_start_ms;
+        // 0.7 s minus the AAC encoder delay that the copy keeps.
+        assert!((600..=720).contains(&start_ms), "{start_ms}");
+        let normal = read_all(&fixture("hello.mp4"));
+        let padded = read_all(&late);
+        let near = |a: usize, b: usize| a.abs_diff(b) <= ms_to_samples(30);
+        assert!(
+            near(onset(&padded) - onset(&normal), ms_to_samples(start_ms)),
+            "speech moved by {} samples",
+            onset(&padded) - onset(&normal)
+        );
+        // From 0.3 s: the same clock (0.3 s less of it).
+        let mut stream = AudioStream::open_at(&late, 300).unwrap();
+        let mut from = Vec::new();
+        while stream.read(&mut from, 1 << 20).unwrap() > 0 {}
+        assert!(
+            near(onset(&from) + ms_to_samples(300), onset(&padded)),
+            "{} vs {}",
+            onset(&from),
+            onset(&padded)
+        );
     }
 
     #[test]

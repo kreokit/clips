@@ -34,8 +34,12 @@ use crate::models::{CANCELLED, WhisperModel};
 use crate::projects::write_atomic;
 use crate::transcribe::{self, Checkpoint, Engine, Options, Segment, Transcript};
 
-/// Bump when the cache's contents change meaning; older caches are discarded.
-const CACHE_VERSION: u32 = 1;
+/// Bump when the cache's contents change meaning; older caches are discarded, unless
+/// [`upgrade`] can bring them up to date. 2: audio that starts after the picture is padded
+/// with silence, so times are on the video's clock (`audio.rs`).
+const CACHE_VERSION: u32 = 2;
+/// Audio starting less than this after the picture leaves version-1 times as they are.
+const MIN_SHIFT_MS: u64 = 20;
 const META_FILE: &str = "meta.json";
 const TRANSCRIPT_FILE: &str = "transcript.json";
 const LOUDNESS_FILE: &str = "loudness.json";
@@ -206,6 +210,57 @@ fn part_file(dir: &Path, index: usize) -> std::path::PathBuf {
 
 fn partial_file(dir: &Path, index: usize) -> std::path::PathBuf {
     dir.join(format!("part-{index:03}.partial.json"))
+}
+
+/// Brings a version-1 cache onto the video's clock: its times were on the audio's clock,
+/// `audio_start_ms()` early. Called when a project opens. A finished transcript (and its
+/// loudness) is shifted, an unfinished run is discarded (its parts would mix clocks), and
+/// a video whose sound starts with its picture keeps its times. Returns the shift applied,
+/// so the project's clips can move with it.
+pub fn upgrade(
+    dir: &Path,
+    audio_start_ms: impl FnOnce() -> Result<u64, String>,
+) -> Result<Option<u64>, String> {
+    let Some(mut meta) = read_json::<Meta>(&dir.join(META_FILE)) else {
+        return Ok(None);
+    };
+    if meta.version != 1 {
+        return Ok(None);
+    }
+    let shift = audio_start_ms()?;
+    meta.version = CACHE_VERSION;
+    if shift < MIN_SHIFT_MS {
+        write_json(&dir.join(META_FILE), &meta)?;
+        return Ok(None);
+    }
+    let finished = read_json::<Transcript>(&dir.join(TRANSCRIPT_FILE))
+        .zip(read_json::<Vec<f32>>(&dir.join(LOUDNESS_FILE)));
+    let Some((transcript, loudness)) = finished else {
+        let _ = fs::remove_dir_all(dir);
+        return Ok(None);
+    };
+    let (transcript, loudness) = shifted(transcript, loudness, shift);
+    write_json(&dir.join(TRANSCRIPT_FILE), &transcript)?;
+    write_json(&dir.join(LOUDNESS_FILE), &loudness)?;
+    write_json(&dir.join(META_FILE), &meta)?;
+    Ok(Some(shift))
+}
+
+/// The transcript `ms` later; the loudness starts with that many (whole) seconds of silence.
+fn shifted(mut transcript: Transcript, loudness: Vec<f32>, ms: u64) -> (Transcript, Vec<f32>) {
+    for segment in &mut transcript.segments {
+        segment.start_ms += ms;
+        segment.end_ms += ms;
+        for word in segment.words.iter_mut().chain(&mut segment.sounds) {
+            word.start_ms += ms;
+            word.end_ms += ms;
+        }
+    }
+    let silence = ((ms + 500) / 1000) as usize;
+    let loudness = std::iter::repeat_n(crate::audio::SILENCE_DB, silence)
+        .chain(loudness)
+        .collect();
+    (transcript, loudness)
 }
 
 fn cache_matches(dir: &Path, meta: &Meta) -> bool {
@@ -630,6 +685,79 @@ mod tests {
         target_ms: 5_000,
         max_ms: 5_500,
     };
+
+    /// A finished version-1 cache: one segment with a word and a sound tag.
+    fn version_1_cache(name: &str, finished: bool) -> (PathBuf, Video) {
+        let dir = temp_dir(name);
+        fs::create_dir_all(&dir).unwrap();
+        let video = Video {
+            size: 10,
+            mtime_ms: 1,
+            duration_ms: 60_000,
+        };
+        let mut meta = Meta::new(&settings(), &video, &chunks::LIMITS);
+        meta.version = 1;
+        write_json(&dir.join(META_FILE), &meta).unwrap();
+        if finished {
+            let w = |start_ms, end_ms, text: &str| transcribe::Word {
+                start_ms,
+                end_ms,
+                text: text.into(),
+            };
+            let transcript = Transcript {
+                language: "en".into(),
+                segments: vec![Segment {
+                    id: 0,
+                    start_ms: 1_000,
+                    end_ms: 3_000,
+                    text: "Hello.".into(),
+                    words: vec![w(1_000, 1_400, "Hello.")],
+                    sounds: vec![w(2_000, 3_000, "[laughter]")],
+                }],
+            };
+            write_json(&dir.join(TRANSCRIPT_FILE), &transcript).unwrap();
+            write_json(&dir.join(LOUDNESS_FILE), &vec![-20.0f32, -30.0]).unwrap();
+        } else {
+            write_json(&dir.join(PLAN_FILE), &"unfinished").unwrap();
+        }
+        (dir, video)
+    }
+
+    #[test]
+    fn older_transcripts_move_onto_the_video_clock_when_the_sound_starts_late() {
+        let (dir, video) = version_1_cache("upgrade-late", true);
+        assert!(cached(&dir, &settings(), &video, &chunks::LIMITS).is_none());
+        assert_eq!(upgrade(&dir, || Ok(677)).unwrap(), Some(677));
+        let out = cached(&dir, &settings(), &video, &chunks::LIMITS).expect("version 2 now");
+        let seg = &out.transcript.segments[0];
+        assert_eq!((seg.start_ms, seg.end_ms), (1_677, 3_677));
+        assert_eq!((seg.words[0].start_ms, seg.words[0].end_ms), (1_677, 2_077));
+        assert_eq!(seg.sounds[0].start_ms, 2_677);
+        assert_eq!(out.loudness, vec![crate::audio::SILENCE_DB, -20.0, -30.0]);
+        // Once only: a second open doesn't probe or move anything.
+        assert_eq!(
+            upgrade(&dir, || panic!("no probe for version 2")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn older_transcripts_keep_correct_times() {
+        let (dir, video) = version_1_cache("upgrade-in-sync", true);
+        let before = fs::read(dir.join(TRANSCRIPT_FILE)).unwrap();
+        assert_eq!(upgrade(&dir, || Ok(12)).unwrap(), None);
+        assert_eq!(fs::read(dir.join(TRANSCRIPT_FILE)).unwrap(), before);
+        assert!(cached(&dir, &settings(), &video, &chunks::LIMITS).is_some());
+    }
+
+    #[test]
+    fn an_older_unfinished_run_starts_over_when_the_sound_starts_late() {
+        let (dir, _) = version_1_cache("upgrade-unfinished", false);
+        assert_eq!(upgrade(&dir, || Ok(500)).unwrap(), None);
+        assert!(!dir.exists());
+        // No cache at all: nothing to do, no probe.
+        assert_eq!(upgrade(&dir, || panic!("no probe")).unwrap(), None);
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()
@@ -1237,6 +1365,47 @@ mod tests {
     /// The whole pipeline on fixtures/en/long.mp4 (10:32, two voices): real ffmpeg and
     /// Whisper Base, cancelled in part 2 and resumed, then compared with an uninterrupted
     /// run. Needs ffmpeg and the base model; takes minutes:
+    /// Whisper on hello.mp4 and on a copy whose sound starts ~0.7 s after its picture: the
+    /// words move by exactly that, so they match the player (needs FFmpeg and the base model).
+    #[test]
+    #[ignore]
+    fn words_follow_the_video_clock_when_the_sound_starts_late() {
+        use crate::audio::tests::late_audio_fixture;
+        use crate::transcribe::tests::base_engine;
+        let hello = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/en/hello.mp4");
+        let late = late_audio_fixture("transcript", 0.7);
+        let first_word = |path: &Path, name: &str| {
+            let info = crate::probe::probe_video(path).unwrap();
+            let video = Video {
+                size: fs::metadata(path).unwrap().len(),
+                mtime_ms: 1,
+                duration_ms: info.duration_ms,
+            };
+            let out = run(
+                &temp_dir(name),
+                &settings(),
+                &video,
+                &chunks::LIMITS,
+                |ms| AudioStream::open_at(path, ms),
+                || Ok(base_engine()),
+                &Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .unwrap();
+            (
+                out.transcript.segments[0].words[0].start_ms,
+                info.audio_start_ms,
+            )
+        };
+        let (normal, _) = first_word(&hello, "clock-normal");
+        let (shifted, start_ms) = first_word(&late, "clock-late");
+        let moved = shifted as i64 - normal as i64;
+        assert!(
+            (moved - start_ms as i64).abs() <= 60,
+            "first word moved {moved} ms; the sound starts {start_ms} ms late"
+        );
+    }
+
     /// `cargo test transcribes_the_long_fixture -- --ignored --nocapture`.
     #[test]
     #[ignore]
