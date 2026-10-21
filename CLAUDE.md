@@ -184,6 +184,10 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
      - **First release run (2026-10-21, 39586350228): all green.** Self-test on all four builds: WER 0.000, the same moment, faces on 45/48 samples, face inside the crop 22/22, both exports High yuv420p. macOS used VideoToolbox; **Windows fell back to OpenH264 (it made High): Media Foundation's H.264 encoder isn't usable on the Windows runner**, so MF is untested in CI. **Tested by the user 2026-10-21 on macOS 12 Intel** (the Intel DMG): `--self-test` ok, the full flow works, Follow face and Fit + blur exports good. **Published 2026-10-21** as a pre-release (`gh release edit --draft=false --prerelease --latest=false`); `gh release list`: v0.1.0-alpha, models-v2 and models-v1 all Pre-release, none Latest (`/releases/latest` is 404, as intended). README's Download section (tag links, all five checked 200) merged from `readme-downloads`.
      - Push after every step; stop when the draft pre-release is ready (the user runs `--self-test` on the Intel build and tests the app before publishing).
 
+## Release checklist
+
+- After publishing, update the kreokit/.github profile README row.
+
 ## Tests (our oracle)
 
 - Transcription: reuse Captions' WER fixtures.
