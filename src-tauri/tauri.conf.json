@@ -44,7 +44,8 @@
       "minimumSystemVersion": "12.0"
     },
     "resources": {
-      "resources/licenses/": "licenses/"
+      "resources/licenses/": "licenses/",
+      "resources/fonts/": "fonts/"
     }
   }
 }

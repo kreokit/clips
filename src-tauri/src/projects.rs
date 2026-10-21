@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::ffmpeg;
 use crate::moments::{FinderSettings, Moment};
 use crate::probe::VideoInfo;
+use crate::style::Style;
 use crate::transcription::Settings;
 
 /// Current `project.json` format version. Bump it when the format changes incompatibly,
@@ -58,6 +59,9 @@ pub struct Project {
     /// The clips board: proposed, kept and discarded clips, found or made by hand.
     #[serde(default)]
     pub clips: Vec<Clip>,
+    /// The caption look of every clip in the project (milestone 5).
+    #[serde(default)]
+    pub style: Style,
     /// Unix milliseconds.
     pub created_at: u64,
     pub opened_at: u64,
@@ -408,6 +412,7 @@ pub fn open_video(
         transcription,
         finder: last_finder(root),
         clips: Vec::new(),
+        style: Style::default(),
         created_at: now,
         opened_at: now,
         updated_at: now,

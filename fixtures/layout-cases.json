@@ -1,0 +1,711 @@
+{
+  "_comment": "Shared test cases for caption line layout. Both src-tauri/src/layout.rs and src/lib/captions/layout.ts must produce exactly these pages, so the preview and the exports break lines the same way. Each page lists its lines as word texts. Breaking rules: see layout.rs.",
+  "cases": [
+    {
+      "name": "fits on one line",
+      "max_chars": 32,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 1000,
+        "end_ms": 2000,
+        "text": "Hello there",
+        "words": [
+          {
+            "start_ms": 1000,
+            "end_ms": 1400,
+            "text": "Hello"
+          },
+          {
+            "start_ms": 1400,
+            "end_ms": 2000,
+            "text": "there"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 1000,
+          "end_ms": 2000,
+          "lines": [
+            [
+              "Hello",
+              "there"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a line holds exactly max_chars, including spaces",
+      "max_chars": 11,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 3000,
+        "text": "Hello there friend",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 1000,
+            "text": "Hello"
+          },
+          {
+            "start_ms": 1000,
+            "end_ms": 2000,
+            "text": "there"
+          },
+          {
+            "start_ms": 2000,
+            "end_ms": 3000,
+            "text": "friend"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 3000,
+          "lines": [
+            [
+              "Hello",
+              "there"
+            ],
+            [
+              "friend"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "overflows into a second page that starts with its first word",
+      "max_chars": 10,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 500,
+        "end_ms": 6000,
+        "text": "The quick brown fox jumps over the lazy dog",
+        "words": [
+          {
+            "start_ms": 600,
+            "end_ms": 800,
+            "text": "The"
+          },
+          {
+            "start_ms": 800,
+            "end_ms": 1200,
+            "text": "quick"
+          },
+          {
+            "start_ms": 1200,
+            "end_ms": 1600,
+            "text": "brown"
+          },
+          {
+            "start_ms": 1600,
+            "end_ms": 2000,
+            "text": "fox"
+          },
+          {
+            "start_ms": 2000,
+            "end_ms": 2500,
+            "text": "jumps"
+          },
+          {
+            "start_ms": 2500,
+            "end_ms": 3000,
+            "text": "over"
+          },
+          {
+            "start_ms": 3000,
+            "end_ms": 3200,
+            "text": "the"
+          },
+          {
+            "start_ms": 3200,
+            "end_ms": 3700,
+            "text": "lazy"
+          },
+          {
+            "start_ms": 3700,
+            "end_ms": 4200,
+            "text": "dog"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 500,
+          "end_ms": 2000,
+          "lines": [
+            [
+              "The",
+              "quick"
+            ],
+            [
+              "brown",
+              "fox"
+            ]
+          ]
+        },
+        {
+          "start_ms": 2000,
+          "end_ms": 3700,
+          "lines": [
+            [
+              "jumps",
+              "over"
+            ],
+            [
+              "the",
+              "lazy"
+            ]
+          ]
+        },
+        {
+          "start_ms": 3700,
+          "end_ms": 6000,
+          "lines": [
+            [
+              "dog"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a word longer than max_chars gets its own line",
+      "max_chars": 8,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 2000,
+        "text": "Unbelievably good",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 1200,
+            "text": "Unbelievably"
+          },
+          {
+            "start_ms": 1200,
+            "end_ms": 2000,
+            "text": "good"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 2000,
+          "lines": [
+            [
+              "Unbelievably"
+            ],
+            [
+              "good"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "one line per page",
+      "max_chars": 12,
+      "max_lines": 1,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 3000,
+        "text": "One two three four",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 700,
+            "text": "One"
+          },
+          {
+            "start_ms": 700,
+            "end_ms": 1500,
+            "text": "two"
+          },
+          {
+            "start_ms": 1500,
+            "end_ms": 2200,
+            "text": "three"
+          },
+          {
+            "start_ms": 2200,
+            "end_ms": 3000,
+            "text": "four"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 1500,
+          "lines": [
+            [
+              "One",
+              "two"
+            ]
+          ]
+        },
+        {
+          "start_ms": 1500,
+          "end_ms": 3000,
+          "lines": [
+            [
+              "three",
+              "four"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "characters are counted, not bytes",
+      "max_chars": 12,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 2000,
+        "text": "Mirëdita, çfarë",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 1000,
+            "text": "Mirëdita,"
+          },
+          {
+            "start_ms": 1000,
+            "end_ms": 2000,
+            "text": "çfarë"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 2000,
+          "lines": [
+            [
+              "Mirëdita,"
+            ],
+            [
+              "çfarë"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a segment without word timings is one word spanning it",
+      "max_chars": 32,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 100,
+        "end_ms": 900,
+        "text": "No timings here",
+        "words": []
+      },
+      "pages": [
+        {
+          "start_ms": 100,
+          "end_ms": 900,
+          "lines": [
+            [
+              "No timings here"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an empty segment has no pages",
+      "max_chars": 32,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 100,
+        "end_ms": 900,
+        "text": "",
+        "words": []
+      },
+      "pages": []
+    },
+    {
+      "name": "a new sentence's first word moves to the next line (not \"RICH. I / DON'T\")",
+      "max_chars": 14,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 1800,
+        "text": "He got rich. I don't know",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 300,
+            "text": "He"
+          },
+          {
+            "start_ms": 300,
+            "end_ms": 600,
+            "text": "got"
+          },
+          {
+            "start_ms": 600,
+            "end_ms": 900,
+            "text": "rich."
+          },
+          {
+            "start_ms": 900,
+            "end_ms": 1200,
+            "text": "I"
+          },
+          {
+            "start_ms": 1200,
+            "end_ms": 1500,
+            "text": "don't"
+          },
+          {
+            "start_ms": 1500,
+            "end_ms": 1800,
+            "text": "know"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 1800,
+          "lines": [
+            [
+              "He",
+              "got",
+              "rich."
+            ],
+            [
+              "I",
+              "don't",
+              "know"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sentence ends behind closing quotes count too",
+      "max_chars": 21,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 1800,
+        "text": "She said \"stop.\" Then we left",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 300,
+            "text": "She"
+          },
+          {
+            "start_ms": 300,
+            "end_ms": 600,
+            "text": "said"
+          },
+          {
+            "start_ms": 600,
+            "end_ms": 900,
+            "text": "\"stop.\""
+          },
+          {
+            "start_ms": 900,
+            "end_ms": 1200,
+            "text": "Then"
+          },
+          {
+            "start_ms": 1200,
+            "end_ms": 1500,
+            "text": "we"
+          },
+          {
+            "start_ms": 1500,
+            "end_ms": 1800,
+            "text": "left"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 1800,
+          "lines": [
+            [
+              "She",
+              "said",
+              "\"stop.\""
+            ],
+            [
+              "Then",
+              "we",
+              "left"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "prefers breaking after a comma",
+      "max_chars": 16,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 1500,
+        "text": "Honestly, we can do it",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 300,
+            "text": "Honestly,"
+          },
+          {
+            "start_ms": 300,
+            "end_ms": 600,
+            "text": "we"
+          },
+          {
+            "start_ms": 600,
+            "end_ms": 900,
+            "text": "can"
+          },
+          {
+            "start_ms": 900,
+            "end_ms": 1200,
+            "text": "do"
+          },
+          {
+            "start_ms": 1200,
+            "end_ms": 1500,
+            "text": "it"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 1500,
+          "lines": [
+            [
+              "Honestly,"
+            ],
+            [
+              "we",
+              "can",
+              "do",
+              "it"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a line doesn't end on a short word like \"to\"",
+      "max_chars": 15,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 1800,
+        "text": "We walked to the old park",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 300,
+            "text": "We"
+          },
+          {
+            "start_ms": 300,
+            "end_ms": 600,
+            "text": "walked"
+          },
+          {
+            "start_ms": 600,
+            "end_ms": 900,
+            "text": "to"
+          },
+          {
+            "start_ms": 900,
+            "end_ms": 1200,
+            "text": "the"
+          },
+          {
+            "start_ms": 1200,
+            "end_ms": 1500,
+            "text": "old"
+          },
+          {
+            "start_ms": 1500,
+            "end_ms": 1800,
+            "text": "park"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 1800,
+          "lines": [
+            [
+              "We",
+              "walked"
+            ],
+            [
+              "to",
+              "the",
+              "old",
+              "park"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a caption doesn't end on a short word like \"in\"",
+      "max_chars": 12,
+      "max_lines": 1,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 1500,
+        "text": "Put it in the box please",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 200,
+            "text": "Put"
+          },
+          {
+            "start_ms": 200,
+            "end_ms": 400,
+            "text": "it"
+          },
+          {
+            "start_ms": 400,
+            "end_ms": 600,
+            "text": "in"
+          },
+          {
+            "start_ms": 600,
+            "end_ms": 700,
+            "text": "the"
+          },
+          {
+            "start_ms": 700,
+            "end_ms": 1000,
+            "text": "box"
+          },
+          {
+            "start_ms": 1000,
+            "end_ms": 1500,
+            "text": "please"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 400,
+          "lines": [
+            [
+              "Put",
+              "it"
+            ]
+          ]
+        },
+        {
+          "start_ms": 400,
+          "end_ms": 1000,
+          "lines": [
+            [
+              "in",
+              "the",
+              "box"
+            ]
+          ]
+        },
+        {
+          "start_ms": 1000,
+          "end_ms": 1500,
+          "lines": [
+            [
+              "please"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "no break that leaves a line under half full, even after punctuation",
+      "max_chars": 22,
+      "max_lines": 2,
+      "segment": {
+        "start_ms": 0,
+        "end_ms": 2100,
+        "text": "Hi, this is the plan for today",
+        "words": [
+          {
+            "start_ms": 0,
+            "end_ms": 300,
+            "text": "Hi,"
+          },
+          {
+            "start_ms": 300,
+            "end_ms": 600,
+            "text": "this"
+          },
+          {
+            "start_ms": 600,
+            "end_ms": 900,
+            "text": "is"
+          },
+          {
+            "start_ms": 900,
+            "end_ms": 1200,
+            "text": "the"
+          },
+          {
+            "start_ms": 1200,
+            "end_ms": 1500,
+            "text": "plan"
+          },
+          {
+            "start_ms": 1500,
+            "end_ms": 1800,
+            "text": "for"
+          },
+          {
+            "start_ms": 1800,
+            "end_ms": 2100,
+            "text": "today"
+          }
+        ]
+      },
+      "pages": [
+        {
+          "start_ms": 0,
+          "end_ms": 2100,
+          "lines": [
+            [
+              "Hi,",
+              "this",
+              "is",
+              "the",
+              "plan"
+            ],
+            [
+              "for",
+              "today"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

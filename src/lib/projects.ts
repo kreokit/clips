@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Style } from "./captions/types";
 import type { Clip, FinderSettings } from "./clips";
 
 /** src-tauri/src/probe.rs `VideoInfo`. */
@@ -36,6 +37,8 @@ export interface Project {
   transcription: TranscriptionSettings;
   finder: FinderSettings;
   clips: Clip[];
+  /** The caption look of every clip in the project. */
+  style: Style;
   created_at: number;
   opened_at: number;
   updated_at: number;

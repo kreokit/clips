@@ -1,0 +1,68 @@
+[
+  {
+    "id": "clean",
+    "name": "Clean subtitle",
+    "description": "Two calm lines with a thin outline.",
+    "style": {
+      "font_family": "Inter",
+      "font_size": 40,
+      "color": "#FFFFFF",
+      "highlight_color": "#FFFFFF",
+      "outline_color": "#000000",
+      "outline_width": 3,
+      "position": "bottom",
+      "max_chars_per_line": 28,
+      "max_lines": 2,
+      "mode": "line",
+      "bold": false,
+      "uppercase": false,
+      "animation": "none",
+      "pos_x": null,
+      "pos_y": null
+    }
+  },
+  {
+    "id": "bold-highlight",
+    "name": "Bold highlight",
+    "description": "Big uppercase captions; the spoken word lights up.",
+    "style": {
+      "font_family": "Montserrat",
+      "font_size": 56,
+      "color": "#FFFFFF",
+      "highlight_color": "#C8F135",
+      "outline_color": "#000000",
+      "outline_width": 5,
+      "position": "bottom",
+      "max_chars_per_line": 14,
+      "max_lines": 2,
+      "mode": "word_highlight",
+      "bold": true,
+      "uppercase": true,
+      "animation": "none",
+      "pos_x": null,
+      "pos_y": null
+    }
+  },
+  {
+    "id": "pop",
+    "name": "One-word pop",
+    "description": "One large word at a time, popping in.",
+    "style": {
+      "font_family": "Bebas Neue",
+      "font_size": 110,
+      "color": "#FFFFFF",
+      "highlight_color": "#FFFFFF",
+      "outline_color": "#000000",
+      "outline_width": 7,
+      "position": "bottom",
+      "max_chars_per_line": 16,
+      "max_lines": 1,
+      "mode": "one_word",
+      "bold": false,
+      "uppercase": true,
+      "animation": "pop",
+      "pos_x": null,
+      "pos_y": null
+    }
+  }
+]

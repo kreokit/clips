@@ -1,0 +1,125 @@
+{
+  "_comment": "Shared test cases for caption placement. src-tauri/src/style.rs + ass.rs (export) and src/lib/captions/position.ts (preview) must both produce these, so captions sit in the same place in the editor and in exported videos. Positions are in ASS script coordinates: 1080 high, width = round(1080 * video width / height). 'an' is the ASS alignment of the anchor (8 top, 5 middle, 2 bottom; always horizontally centred).",
+  "cases": [
+    {
+      "name": "old project, bottom preset, 16:9",
+      "style": {
+        "position": "bottom"
+      },
+      "frame": {
+        "width": 1920,
+        "height": 1080
+      },
+      "play_res_x": 1920,
+      "an": 2,
+      "pos": [
+        960,
+        799
+      ]
+    },
+    {
+      "name": "old project, top preset, 9:16",
+      "style": {
+        "position": "top"
+      },
+      "frame": {
+        "width": 1080,
+        "height": 1920
+      },
+      "play_res_x": 608,
+      "an": 8,
+      "pos": [
+        304,
+        130
+      ]
+    },
+    {
+      "name": "old project, middle preset, 9:16",
+      "style": {
+        "position": "middle"
+      },
+      "frame": {
+        "width": 1080,
+        "height": 1920
+      },
+      "play_res_x": 608,
+      "an": 5,
+      "pos": [
+        304,
+        540
+      ]
+    },
+    {
+      "name": "dragged low and left, 16:9",
+      "style": {
+        "position": "bottom",
+        "pos_x": 0.25,
+        "pos_y": 0.8
+      },
+      "frame": {
+        "width": 1920,
+        "height": 1080
+      },
+      "play_res_x": 1920,
+      "an": 2,
+      "pos": [
+        480,
+        864
+      ]
+    },
+    {
+      "name": "dragged high and right, 9:16",
+      "style": {
+        "position": "top",
+        "pos_x": 0.7,
+        "pos_y": 0.2
+      },
+      "frame": {
+        "width": 1080,
+        "height": 1920
+      },
+      "play_res_x": 608,
+      "an": 8,
+      "pos": [
+        426,
+        216
+      ]
+    },
+    {
+      "name": "out-of-range values stay on the frame",
+      "style": {
+        "position": "middle",
+        "pos_x": 1.4,
+        "pos_y": -0.2
+      },
+      "frame": {
+        "width": 1920,
+        "height": 1080
+      },
+      "play_res_x": 1920,
+      "an": 5,
+      "pos": [
+        1920,
+        0
+      ]
+    },
+    {
+      "name": "other shapes: 4:5",
+      "style": {
+        "position": "middle",
+        "pos_x": 0.5,
+        "pos_y": 0.5
+      },
+      "frame": {
+        "width": 1080,
+        "height": 1350
+      },
+      "play_res_x": 864,
+      "an": 5,
+      "pos": [
+        432,
+        540
+      ]
+    }
+  ]
+}

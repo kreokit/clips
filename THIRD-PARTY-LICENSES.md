@@ -46,8 +46,15 @@ here.
 
 ## Fonts (bundled)
 
-Inter (interface font), © The Inter Project Authors, **SIL Open Font License 1.1**; the
-licence ships with the app as `licenses/Inter-OFL.txt`.
+All under the **SIL Open Font License 1.1**; licence files ship next to the fonts (the
+`fonts` folder), the same files as in KreoKit Captions (`src-tauri/resources/fonts/README.md`).
+
+| Font | Use | Copyright | Licence file |
+|---|---|---|---|
+| Inter | interface and captions | © The Inter Project Authors | `fonts/OFL-Inter.txt` |
+| Montserrat | captions | © The Montserrat Project Authors | `fonts/OFL-Montserrat.txt` |
+| Poppins | captions | © The Poppins Project Authors | `fonts/OFL-Poppins.txt` |
+| Bebas Neue | captions | © Dharma Type | `fonts/OFL-BebasNeue.txt` |
 
 ## Icons
 

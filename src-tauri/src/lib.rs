@@ -8,12 +8,16 @@ mod cpu;
 mod faces;
 mod ffmpeg;
 mod frames;
+#[cfg_attr(not(test), allow(dead_code))] // the caption export (M5 step 5)
+mod layout;
 mod models;
 mod moments;
 mod probe;
 mod projects;
 mod reframe;
 mod sentences;
+#[cfg_attr(not(test), allow(dead_code))] // the caption export (M5 step 5)
+mod style;
 mod tracks;
 mod transcribe;
 mod transcription;

@@ -1,0 +1,40 @@
+/*
+ * Caption fonts bundled with the app. These are the same files the burned-in export
+ * hands to libass (src-tauri/resources/fonts, see burn.rs), so preview and export use
+ * identical glyphs. Static weights only: 400 and 700 (Bebas Neue has one weight).
+ */
+@font-face {
+  font-family: "Inter";
+  src: url("../../src-tauri/resources/fonts/Inter-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../../src-tauri/resources/fonts/Inter-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+@font-face {
+  font-family: "Montserrat";
+  src: url("../../src-tauri/resources/fonts/Montserrat-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Montserrat";
+  src: url("../../src-tauri/resources/fonts/Montserrat-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+@font-face {
+  font-family: "Poppins";
+  src: url("../../src-tauri/resources/fonts/Poppins-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Poppins";
+  src: url("../../src-tauri/resources/fonts/Poppins-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+@font-face {
+  font-family: "Bebas Neue";
+  src: url("../../src-tauri/resources/fonts/BebasNeue-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
