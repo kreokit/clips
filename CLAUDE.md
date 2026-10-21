@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-21):** Milestones 1 (Scaffold) and 2 (Transcribe long videos) are done and tested. Milestone 3 (moment finder + clips board, now with platform presets) is built and waiting for the user's test.
+**Status (2026-10-21):** Milestones 1 (Scaffold), 2 (Transcribe long videos) and 3 (moment finder + clips board, with platform presets) are done and tested. Next: milestone 4 (Reframe), once the user says go.
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -131,7 +131,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 2. ✅ **Transcribe long videos:** port Captions' pipeline incl. macOS build flags; chunking, progress, cancel, cache; tested on a 10+ minute synthetic video.
    - Decided 2026-10-20: the three ggml Whisper models (Base, Small, Large-v3-turbo) are mirrored unchanged in `models-v1` on `kreokit/clips` (licence, SOURCE.md, SHA256SUMS); the app downloads only from there. A matching model already in Captions' models folder is used read-only after a SHA-256 check instead of downloading it again. The computer is kept awake only while a job runs (macOS, and Windows via `SetThreadExecutionState`); check the new dependency's licence.
    - `models-v1` is published (2026-10-20). GitHub shows it as "Latest" while it's the only release; mark the app release as latest when it's published (as in Cutout, never link `/releases/latest` for the app before that).
-3. **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips. Built 2026-10-20, waiting for the user's test (see "Moments and clips").
+3. ✅ **Moment finder + clips board:** scoring module with unit tests, candidate list UI, in/out editing on a timeline, manual clips; platform presets, delete project, Transcribe again. Tested by the user 2026-10-21 (see "Moments and clips").
 4. **Reframe:** BlazeFace full-range converted to ONNX in Actions (license verified, mirrored), detection + tracking + smoothing, crop modes, preview.
 5. **Captions + export all:** reuse styles/layout/ASS/burn-in on the 9:16 output, batch export with safe writing. **Verify every exported TikTok clip is > 60.0 s (ffprobe the output file, not the in/out points); never ship a 59.9 s clip.** Keyframe snapping, frame rounding or audio trimming must not shorten a 61 s clip below 60.0 s.
 6. **Release:** reuse the release workflow, `--self-test` (transcribe a short fixture, find ≥1 moment, reframe, export one clip and verify size/duration), draft pre-release v0.1.0-alpha.
