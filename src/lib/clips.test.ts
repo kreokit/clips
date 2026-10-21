@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Clip, DEFAULT_FINDER, Moment, applyScores, autoCountLabel, boardView, finderSummary, fixRange, tiktokWarning, withPlatform, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
+import { Clip, DEFAULT_FINDER, defaultFraming, Moment, applyScores, autoCountLabel, boardView, finderSummary, fixRange, tiktokWarning, withPlatform, countByStatus, findRequest, firstLine, manualClip, mergeFound, nextId, topReasons, untouched } from "./clips";
 
 const moment = (in_ms: number, out_ms: number, score = 50, reasons: [string, boolean][] = []): Moment => ({
   in_ms,
@@ -17,6 +17,7 @@ const clip = (id: number, p: Partial<Clip> = {}): Clip => ({
   source: "found",
   edited: false,
   moment: moment(id * 100_000, id * 100_000 + 30_000),
+  framing: defaultFraming(),
   ...p,
 });
 
@@ -54,6 +55,7 @@ describe("Find again", () => {
       source: "manual",
       edited: false,
       moment: null,
+      framing: { mode: "track", manual: [] },
     });
   });
 });

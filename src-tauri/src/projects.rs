@@ -96,6 +96,33 @@ pub struct Clip {
     /// Its score, reasons and words for the current in/out (`None`: no words inside).
     #[serde(default)]
     pub moment: Option<Moment>,
+    /// How it is cropped to 9:16 (projects from before milestone 4: follow the face).
+    #[serde(default)]
+    pub framing: Framing,
+}
+
+/// How a clip becomes 9:16 (CLAUDE.md "Reframe").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CropMode {
+    /// Follow the subject's face (`reframe::auto_path`); centre when there is none.
+    #[default]
+    Track,
+    /// The centre of the frame.
+    Center,
+    /// The whole frame, fitted inside 9:16 over a blurred copy of itself.
+    FitBlur,
+    /// The user's keyframes (`manual`), set by dragging the crop.
+    Manual,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Framing {
+    #[serde(default)]
+    pub mode: CropMode,
+    /// Manual mode's keyframes on the video's clock (those outside the clip are ignored).
+    #[serde(default)]
+    pub manual: Vec<crate::reframe::Keyframe>,
 }
 
 /// A project plus what the Home screen needs to show it.
@@ -249,6 +276,15 @@ pub fn shift_clips(root: &Path, project: Project, ms: u64) -> Result<Project, St
                 (m.in_ms, m.out_ms) = (later(m.in_ms), later(m.out_ms));
                 m
             }),
+            framing: Framing {
+                manual: (c.framing.manual.iter())
+                    .map(|k| crate::reframe::Keyframe {
+                        t_ms: later(k.t_ms),
+                        ..*k
+                    })
+                    .collect(),
+                ..c.framing
+            },
             ..c
         })
         .collect();
@@ -601,6 +637,7 @@ mod tests {
                 source: ClipSource::Manual,
                 edited: false,
                 moment: None,
+                framing: Framing::default(),
             }],
             ..first
         };
@@ -650,6 +687,7 @@ mod tests {
                 source: ClipSource::Manual,
                 edited: false,
                 moment: None,
+                framing: Framing::default(),
             }],
             ..old.clone()
         };
@@ -694,6 +732,7 @@ mod tests {
                 source: ClipSource::Manual,
                 edited: false,
                 moment: None,
+                framing: Framing::default(),
             }],
             ..p
         };
@@ -825,6 +864,15 @@ mod tests {
             source: ClipSource::Manual,
             edited: true,
             moment: None,
+            framing: Framing {
+                mode: CropMode::Manual,
+                manual: vec![crate::reframe::Keyframe {
+                    t_ms: 2_000,
+                    pos: 0.3,
+                    jump: false,
+                    ease: false,
+                }],
+            },
         };
         let with_clips = Project {
             clips: vec![clip.clone()],
@@ -843,6 +891,18 @@ mod tests {
         let old = load(&root, &p.id).unwrap();
         assert!(old.clips.is_empty());
         assert_eq!(old.finder, FinderSettings::default());
+
+        // A clip from before milestone 4 (no framing) follows the face.
+        save(&root, &with_clips, 3).unwrap();
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        json["clips"][0].as_object_mut().unwrap().remove("framing");
+        fs::write(&path, json.to_string()).unwrap();
+        assert_eq!(
+            load(&root, &p.id).unwrap().clips[0].framing,
+            Framing::default()
+        );
+        assert_eq!(Framing::default().mode, CropMode::Track);
     }
 
     #[test]
@@ -858,14 +918,23 @@ mod tests {
             source: ClipSource::Found,
             edited: false,
             moment: None,
+            framing: Framing::default(),
         };
+        let mut manual = clip(1, 1_000, 31_000);
+        manual.framing.manual = vec![crate::reframe::Keyframe {
+            t_ms: 5_000,
+            pos: 0.3,
+            jump: false,
+            ease: false,
+        }];
         let p = Project {
-            clips: vec![clip(1, 1_000, 31_000), clip(2, end - 20_000, end - 300)],
+            clips: vec![manual, clip(2, end - 20_000, end - 300)],
             ..p
         };
         let shifted = shift_clips(&root, p, 677).unwrap();
         let ranges: Vec<_> = shifted.clips.iter().map(|c| (c.in_ms, c.out_ms)).collect();
         assert_eq!(ranges, [(1_677, 31_677), (end - 19_323, end)]);
+        assert_eq!(shifted.clips[0].framing.manual[0].t_ms, 5_677);
         assert_eq!(load(&root, &shifted.id).unwrap().clips, shifted.clips);
     }
 

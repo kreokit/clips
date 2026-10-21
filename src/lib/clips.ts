@@ -104,6 +104,32 @@ export interface Clip {
   edited: boolean;
   /** Score, reasons and words for the current in/out; null without words inside. */
   moment: Moment | null;
+  /** How it is cropped to 9:16. */
+  framing: Framing;
+}
+
+/** src-tauri/src/projects.rs `CropMode`. */
+export type CropMode = "track" | "center" | "fit_blur" | "manual";
+
+/** src-tauri/src/reframe.rs `Keyframe`: the crop centre on the path's axis, 0–1. */
+export interface Keyframe {
+  t_ms: number;
+  pos: number;
+  /** A cut: not joined to the keyframe before. */
+  jump: boolean;
+  /** Reached along the smootherstep curve (a camera move). */
+  ease: boolean;
+}
+
+/** src-tauri/src/projects.rs `Framing`. */
+export interface Framing {
+  mode: CropMode;
+  /** Manual mode's keyframes, on the video's clock. */
+  manual: Keyframe[];
+}
+
+export function defaultFraming(): Framing {
+  return { mode: "track", manual: [] };
 }
 
 /** src-tauri/src/sentences.rs `Boundary`. */
@@ -168,6 +194,7 @@ export function mergeFound(clips: Clip[], found: Moment[]): Clip[] {
         source: "found",
         edited: false,
         moment,
+        framing: defaultFraming(),
       }),
     ),
   ];
@@ -175,7 +202,16 @@ export function mergeFound(clips: Clip[], found: Moment[]): Clip[] {
 
 /** A manual clip, kept (the user chose it). */
 export function manualClip(clips: Clip[], in_ms: number, out_ms: number, moment: Moment | null): Clip {
-  return { id: nextId(clips), in_ms, out_ms, status: "kept", source: "manual", edited: false, moment };
+  return {
+    id: nextId(clips),
+    in_ms,
+    out_ms,
+    status: "kept",
+    source: "manual",
+    edited: false,
+    moment,
+    framing: defaultFraming(),
+  };
 }
 
 export type ClipFilter = "all" | ClipStatus;
