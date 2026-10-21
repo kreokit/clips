@@ -425,13 +425,19 @@ pub(crate) mod tests {
 
     /// The face model in the app's models folder (`models::tests::dev_dirs`), downloaded
     /// there if missing (2 MB). Elsewhere than macOS, a temporary folder.
+    /// Tests run in parallel; they share one download.
     pub(crate) fn face_model() -> PathBuf {
-        let dir = if cfg!(target_os = "macos") || std::env::var_os("KREOKIT_APP_DATA").is_some() {
-            models::tests::dev_dirs().ours
-        } else {
-            std::env::temp_dir().join("kreokit-clips-face-model")
-        };
-        models::download(FACE_MODEL, &dir, &AtomicBool::new(false), |_| {}).unwrap()
+        static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        PATH.get_or_init(|| {
+            let dir =
+                if cfg!(target_os = "macos") || std::env::var_os("KREOKIT_APP_DATA").is_some() {
+                    models::tests::dev_dirs().ours
+                } else {
+                    std::env::temp_dir().join("kreokit-clips-face-model")
+                };
+            models::download(FACE_MODEL, &dir, &AtomicBool::new(false), |_| {}).unwrap()
+        })
+        .clone()
     }
 
     fn faces_dir() -> PathBuf {

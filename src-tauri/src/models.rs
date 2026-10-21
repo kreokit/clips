@@ -301,8 +301,12 @@ pub fn download(
             CORRUPT => format!("the downloaded {} is damaged; please try again", file.name),
             _ => e,
         })?;
-        fs::rename(&part, &target).map_err(|e| format!("cannot save model file: {e}"))?;
-        Ok(target.clone())
+        match fs::rename(&part, &target) {
+            Ok(()) => Ok(target.clone()),
+            // Another download of the same file finished first (and took the `.part`).
+            Err(_) if file.is_downloaded(models_dir) => Ok(target.clone()),
+            Err(e) => Err(format!("cannot save model file: {e}")),
+        }
     })();
 
     if result.is_err() {
