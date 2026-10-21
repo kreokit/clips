@@ -88,7 +88,11 @@ pub fn clip_captions(text: &Text, fixes: &[WordFix], in_ms: u64, out_ms: u64) ->
                 id: i as u32,
                 start_ms: starts[i],
                 end_ms: (last_end + HOLD_MS).min(limit).max(last_end),
-                text: words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "),
+                text: words
+                    .iter()
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
                 words,
             }
         })
@@ -140,12 +144,24 @@ mod tests {
 
     #[test]
     fn every_word_once_on_the_clip_clock() {
-        let t = text(&["One two three.", "Four five.", "Six seven eight nine."], 300);
+        let t = text(
+            &["One two three.", "Four five.", "Six seven eight nine."],
+            300,
+        );
         let all = clip_captions(&t, &[], 0, 100_000);
-        let words: Vec<&str> = all.iter().flat_map(|s| s.words.iter().map(|w| w.text.as_str())).collect();
-        assert_eq!(words.join(" "), "One two three. Four five. Six seven eight nine.");
+        let words: Vec<&str> = all
+            .iter()
+            .flat_map(|s| s.words.iter().map(|w| w.text.as_str()))
+            .collect();
+        assert_eq!(
+            words.join(" "),
+            "One two three. Four five. Six seven eight nine."
+        );
         // Each sentence starts a caption.
-        assert_eq!(texts(&all), ["One two three.", "Four five.", "Six seven eight nine."]);
+        assert_eq!(
+            texts(&all),
+            ["One two three.", "Four five.", "Six seven eight nine."]
+        );
 
         // In at 1000 (the middle of "three." is 950, so it stays out).
         let clip = clip_captions(&t, &[], 1_000, 3_000);
@@ -196,10 +212,22 @@ mod tests {
     fn fixes_change_or_hide_words_wherever_they_show() {
         let t = text(&["Hello wrold again."], 0);
         let fixes = [
-            WordFix { start_ms: 400, was: "wrold".into(), text: "world".into() },
-            WordFix { start_ms: 800, was: "again.".into(), text: " ".into() },
+            WordFix {
+                start_ms: 400,
+                was: "wrold".into(),
+                text: "world".into(),
+            },
+            WordFix {
+                start_ms: 800,
+                was: "again.".into(),
+                text: " ".into(),
+            },
             // A fix for a word that's no longer there (another transcript): ignored.
-            WordFix { start_ms: 0, was: "Hi".into(), text: "Bye".into() },
+            WordFix {
+                start_ms: 0,
+                was: "Hi".into(),
+                text: "Bye".into(),
+            },
         ];
         assert_eq!(texts(&clip_captions(&t, &fixes, 0, 5_000)), ["Hello world"]);
         assert_eq!(texts(&clip_captions(&t, &fixes, 300, 5_000)), ["world"]);
@@ -208,8 +236,15 @@ mod tests {
     #[test]
     fn a_hidden_sentence_start_still_starts_the_next_caption() {
         let t = text(&["One two.", "Um three four."], 0);
-        let fixes = [WordFix { start_ms: 700, was: "Um".into(), text: String::new() }];
-        assert_eq!(texts(&clip_captions(&t, &fixes, 0, 5_000)), ["One two.", "three four."]);
+        let fixes = [WordFix {
+            start_ms: 700,
+            was: "Um".into(),
+            text: String::new(),
+        }];
+        assert_eq!(
+            texts(&clip_captions(&t, &fixes, 0, 5_000)),
+            ["One two.", "three four."]
+        );
     }
 
     #[test]

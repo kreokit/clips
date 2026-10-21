@@ -454,6 +454,40 @@ async fn reframe_path(
     .await
 }
 
+/// The faces found in a clip, per face-analysis sample, as boxes in shares of the video
+/// frame (left, top, right, bottom), or `None` until its faces are analysed. For the
+/// editor's warning when captions cover a face.
+#[tauri::command]
+async fn clip_faces(
+    app: AppHandle,
+    id: String,
+    in_ms: u64,
+    out_ms: u64,
+) -> Result<Option<Vec<(u64, Vec<[f32; 4]>)>>, String> {
+    blocking(move || {
+        let (dir, video) = faces_job(&app, &id)?;
+        let Some(samples) = analysis::samples(&dir, &video, in_ms, out_ms) else {
+            return Ok(None);
+        };
+        let (w, h) = frames::sample_size(video.width, video.height);
+        let (w, h) = (w as f32, h as f32);
+        Ok(Some(
+            samples
+                .iter()
+                .map(|s| {
+                    let boxes = s
+                        .faces
+                        .iter()
+                        .map(|f| [f.x0 / w, f.y0 / h, f.x1 / w, f.y1 / h])
+                        .collect();
+                    (s.t_ms, boxes)
+                })
+                .collect(),
+        ))
+    })
+    .await
+}
+
 /// Path of a clip's thumbnail, the frame `ms` into the video (made on first request).
 #[tauri::command]
 async fn clip_thumbnail(app: AppHandle, id: String, ms: u64) -> Result<String, String> {
@@ -487,6 +521,13 @@ async fn waveform_range(
 async fn remember_finder(app: AppHandle, finder: moments::FinderSettings) -> Result<(), String> {
     let root = projects_root(&app)?;
     blocking(move || projects::remember_finder(&root, &finder)).await
+}
+
+/// Remembers the caption style for new projects.
+#[tauri::command]
+async fn remember_style(app: AppHandle, style: style::Style) -> Result<(), String> {
+    let root = projects_root(&app)?;
+    blocking(move || projects::remember_style(&root, &style)).await
 }
 
 /// The project's finished transcript for these settings, and its loudness.
@@ -658,11 +699,13 @@ pub fn run() {
             analyze_faces,
             cancel_faces,
             reframe_path,
+            clip_faces,
             transcript_text,
             clip_captions,
             find_moments,
             score_clips,
             remember_finder,
+            remember_style,
             cpu_support,
             quit_app,
             report_problem,

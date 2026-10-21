@@ -31,6 +31,8 @@ const THUMBNAIL_FILE: &str = "thumbnail.jpg";
 /// The finder settings chosen last (in any project), for new projects; in the projects
 /// folder, next to the project folders.
 const LAST_FINDER_FILE: &str = "last-finder.json";
+/// The caption style used last, for new projects (decided 2026-10-21).
+const LAST_STYLE_FILE: &str = "last-style.json";
 /// A project's transcript cache, inside its folder (see `transcription.rs`).
 pub const TRANSCRIPT_DIR: &str = "transcript";
 /// The face analysis cache (`analysis.rs`).
@@ -248,6 +250,20 @@ pub fn remember_finder(root: &Path, finder: &FinderSettings) -> Result<(), Strin
     write_atomic(&root.join(LAST_FINDER_FILE), &json)
 }
 
+pub fn last_style(root: &Path) -> Style {
+    fs::read(root.join(LAST_STYLE_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Style>(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Remembers `style` for new projects.
+pub fn remember_style(root: &Path, style: &Style) -> Result<(), String> {
+    fs::create_dir_all(root).map_err(|e| format!("cannot create {}: {e}", root.display()))?;
+    let json = serde_json::to_vec_pretty(style).map_err(|e| e.to_string())?;
+    write_atomic(&root.join(LAST_STYLE_FILE), &json)
+}
+
 /// Saves `project` (the autosave). Returns it with `updated_at` set.
 pub fn save(root: &Path, project: &Project, now: u64) -> Result<Project, String> {
     let dir = project_dir(root, &project.id)?;
@@ -416,7 +432,7 @@ pub fn open_video(
         transcription,
         finder: last_finder(root),
         clips: Vec::new(),
-        style: Style::default(),
+        style: last_style(root),
         word_fixes: Vec::new(),
         created_at: now,
         opened_at: now,
@@ -967,6 +983,37 @@ mod tests {
             a.finder
         );
         assert_eq!(list(&root).len(), 2);
+    }
+
+    #[test]
+    fn new_projects_take_the_last_caption_style() {
+        let (root, video) = setup("last-style");
+        let other = video.with_file_name("other.mp4");
+        fs::write(&other, b"y").unwrap();
+        let a = open_video(&root, &video, probe_ok, 1).unwrap();
+        assert_eq!(a.style, Style::default());
+        assert!(a.word_fixes.is_empty());
+        let mine = Style {
+            font_family: "Poppins".into(),
+            pos_y: Some(0.6),
+            ..Style::default()
+        };
+        remember_style(&root, &mine).unwrap();
+        assert_eq!(open_video(&root, &other, probe_ok, 2).unwrap().style, mine);
+        assert_eq!(
+            open_video(&root, &video, probe_ok, 3).unwrap().style,
+            a.style
+        );
+        assert_eq!(list(&root).len(), 2);
+        // Projects saved before milestone 5 get the default style and no fixes.
+        let path = root.join(&a.id).join(PROJECT_FILE);
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        json.as_object_mut().unwrap().remove("style");
+        json.as_object_mut().unwrap().remove("word_fixes");
+        fs::write(&path, json.to_string()).unwrap();
+        let old = load(&root, &a.id).unwrap();
+        assert_eq!((old.style, old.word_fixes.len()), (Style::default(), 0));
     }
 
     #[test]

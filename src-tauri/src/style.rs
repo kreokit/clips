@@ -131,7 +131,10 @@ mod tests {
 
     #[test]
     fn preset_spots_clear_the_platform_interface() {
-        let style = |position| Style { position, ..Style::default() };
+        let style = |position| Style {
+            position,
+            ..Style::default()
+        };
         assert_eq!(style(Position::Top).anchor(), (0.5, PRESET_TOP));
         assert_eq!(style(Position::Bottom).anchor(), (0.5, PRESET_BOTTOM));
         assert!(PRESET_TOP > 0.10 && PRESET_BOTTOM < 1.0 - 0.22);

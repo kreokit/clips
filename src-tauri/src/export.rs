@@ -30,7 +30,10 @@ pub const OUT: (u32, u32) = (1080, 1920);
 #[derive(Debug, Clone, Copy)]
 pub enum Picture<'a> {
     /// The 9:16 crop along `keyframes` (Follow face, Center, Manual).
-    Crop { keyframes: &'a [Keyframe], axis: Axis },
+    Crop {
+        keyframes: &'a [Keyframe],
+        axis: Axis,
+    },
     /// The whole frame, over a blurred, darkened copy of itself (the editor's preview:
     /// a 54×96 copy, blurred and at 70% brightness).
     FitBlur,
@@ -78,7 +81,10 @@ pub fn video_graph(
     let (w, h) = OUT;
     let picture = match picture {
         Picture::Crop { keyframes, axis } => {
-            format!("[0:v]{}", reframe::crop_filter(keyframes, axis, source, start_ms, OUT))
+            format!(
+                "[0:v]{}",
+                reframe::crop_filter(keyframes, axis, source, start_ms, OUT)
+            )
         }
         Picture::FitBlur => format!(
             "[0:v]split=2[bg][fg];\
@@ -198,12 +204,28 @@ pub fn encode(
     ));
     let result = prepare_work_dir(&work_dir, job.ass, job.fonts).and_then(|captions| {
         let rate = output_rate(job.fps);
-        let graph = video_graph(job.picture, job.source, job.in_ms, rate, captions.as_deref());
+        let graph = video_graph(
+            job.picture,
+            job.source,
+            job.in_ms,
+            rate,
+            captions.as_deref(),
+        );
         // An encoder can be listed but unusable (e.g. Media Foundation missing on some
         // Windows editions); if it fails before writing any video, try the next.
         let mut failures = Vec::new();
         for encoder in &encoders {
-            match run_ffmpeg(&ffmpeg, &work_dir, job, &graph, rate, encoder, output, cancel, &mut on_progress) {
+            match run_ffmpeg(
+                &ffmpeg,
+                &work_dir,
+                job,
+                &graph,
+                rate,
+                encoder,
+                output,
+                cancel,
+                &mut on_progress,
+            ) {
                 Ok(()) => return Ok(()),
                 Err(attempt) if !attempt.started && attempt.message != CANCELLED => {
                     failures.push(format!("{encoder}: {}", attempt.message));
@@ -267,30 +289,59 @@ struct Attempt {
 fn output_args(encoder: &str, (rate_n, rate_d): (u32, u32), length_ms: u64) -> Vec<String> {
     let gop = (2.0 * rate_n as f64 / rate_d as f64).round() as u32;
     let mut args: Vec<String> = [
-        "-map", "[v]", "-map", "0:a:0", "-c:v", encoder, "-profile:v", "high",
+        "-map",
+        "[v]",
+        "-map",
+        "0:a:0",
+        "-c:v",
+        encoder,
+        "-profile:v",
+        "high",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect();
-    args.extend(["-b:v".into(), VIDEO_BITRATE.to_string(), "-g".into(), gop.to_string()]);
+    args.extend([
+        "-b:v".into(),
+        VIDEO_BITRATE.to_string(),
+        "-g".into(),
+        gop.to_string(),
+    ]);
     // VideoToolbox may fall back to Apple's software encoder (e.g. in VMs).
     if encoder == "h264_videotoolbox" {
         args.extend(["-allow_sw".into(), "1".into()]);
     }
     args.extend(
         [
-            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
-            "-color_range", "tv",
+            "-colorspace",
+            "bt709",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-color_range",
+            "tv",
             // Audio from the clip's first moment (silence where the source's sound starts
             // late, as the transcript's clock has it) to its last.
-            "-af", "aresample=async=1:first_pts=0,apad",
-            "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            "-af",
+            "aresample=async=1:first_pts=0,apad",
+            "-c:a",
+            "aac",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
         ]
         .iter()
         .map(|s| s.to_string()),
     );
     args.extend(["-b:a".into(), AUDIO_BITRATE.to_string()]);
-    args.extend(["-t".into(), secs(length_ms), "-movflags".into(), "+faststart".into()]);
+    args.extend([
+        "-t".into(),
+        secs(length_ms),
+        "-movflags".into(),
+        "+faststart".into(),
+    ]);
     args.extend(["-f".into(), "mp4".into()]);
     args
 }
@@ -314,7 +365,15 @@ fn run_ffmpeg(
     let length_ms = job.length_ms();
     let mut child = Command::new(ffmpeg)
         .current_dir(work_dir)
-        .args(["-nostdin", "-y", "-v", "error", "-nostats", "-progress", "pipe:1"])
+        .args([
+            "-nostdin",
+            "-y",
+            "-v",
+            "error",
+            "-nostats",
+            "-progress",
+            "pipe:1",
+        ])
         .args(["-ss", &secs(job.in_ms), "-t", &secs(length_ms + 1000), "-i"])
         .arg(absolute(job.video))
         .args(["-filter_complex", graph])
@@ -411,7 +470,14 @@ pub struct Facts {
 pub fn probe_output(path: &Path) -> Result<Facts, String> {
     let ffprobe = ffmpeg::locate("ffprobe")?;
     let output = Command::new(&ffprobe)
-        .args(["-v", "error", "-show_streams", "-show_format", "-of", "json"])
+        .args([
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
+        ])
         .arg(path)
         .output()
         .map_err(|e| format!("failed to run {}: {e}", ffprobe.display()))?;
@@ -469,7 +535,8 @@ fn moov_first(path: &Path) -> Result<bool, String> {
     let mut at = 0u64;
     while at + 8 <= len {
         use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(at)).map_err(|e| e.to_string())?;
+        file.seek(std::io::SeekFrom::Start(at))
+            .map_err(|e| e.to_string())?;
         let mut head = [0u8; 16];
         file.read_exact(&mut head[..8]).map_err(|e| e.to_string())?;
         let mut size = u32::from_be_bytes(head[..4].try_into().unwrap()) as u64;
@@ -492,17 +559,34 @@ fn moov_first(path: &Path) -> Result<bool, String> {
 
 /// What a finished clip must be: TikTok-ready, the clip's length in every stream (within
 /// a frame and an audio packet), and over 60.0 s in every stream when `over_a_minute`.
-pub fn check(facts: &Facts, length_ms: u64, (rate_n, rate_d): (u32, u32), over_a_minute: bool) -> Result<(), String> {
+pub fn check(
+    facts: &Facts,
+    length_ms: u64,
+    (rate_n, rate_d): (u32, u32),
+    over_a_minute: bool,
+) -> Result<(), String> {
     let mut problems = Vec::new();
     let mut expect = |ok: bool, what: String| {
         if !ok {
             problems.push(what);
         }
     };
-    expect((facts.width, facts.height) == OUT, format!("size {}×{}", facts.width, facts.height));
-    expect(facts.video_codec == "h264", format!("video codec {}", facts.video_codec));
-    expect(facts.profile == "High", format!("H.264 profile {}", facts.profile));
-    expect(facts.pix_fmt == "yuv420p", format!("pixel format {}", facts.pix_fmt));
+    expect(
+        (facts.width, facts.height) == OUT,
+        format!("size {}×{}", facts.width, facts.height),
+    );
+    expect(
+        facts.video_codec == "h264",
+        format!("video codec {}", facts.video_codec),
+    );
+    expect(
+        facts.profile == "High",
+        format!("H.264 profile {}", facts.profile),
+    );
+    expect(
+        facts.pix_fmt == "yuv420p",
+        format!("pixel format {}", facts.pix_fmt),
+    );
     for (name, value) in [
         ("colour matrix", &facts.color_space),
         ("colour primaries", &facts.color_primaries),
@@ -510,10 +594,22 @@ pub fn check(facts: &Facts, length_ms: u64, (rate_n, rate_d): (u32, u32), over_a
     ] {
         expect(value == "bt709", format!("{name} {value}"));
     }
-    expect(facts.color_range == "tv", format!("colour range {}", facts.color_range));
-    expect(facts.audio_codec == "aac", format!("audio codec {}", facts.audio_codec));
-    expect(facts.sample_rate == AUDIO_RATE, format!("sample rate {}", facts.sample_rate));
-    expect(facts.faststart, "the index isn't at the start (faststart)".into());
+    expect(
+        facts.color_range == "tv",
+        format!("colour range {}", facts.color_range),
+    );
+    expect(
+        facts.audio_codec == "aac",
+        format!("audio codec {}", facts.audio_codec),
+    );
+    expect(
+        facts.sample_rate == AUDIO_RATE,
+        format!("sample rate {}", facts.sample_rate),
+    );
+    expect(
+        facts.faststart,
+        "the index isn't at the start (faststart)".into(),
+    );
 
     let frame_ms = 1000 * rate_d as u64 / rate_n.max(1) as u64;
     let slack = frame_ms.max(1024 * 1000 / AUDIO_RATE as u64) + 10;
@@ -536,7 +632,10 @@ pub fn check(facts: &Facts, length_ms: u64, (rate_n, rate_d): (u32, u32), over_a
     if problems.is_empty() {
         Ok(())
     } else {
-        Err(format!("The exported clip isn't right: {}.", problems.join(", ")))
+        Err(format!(
+            "The exported clip isn't right: {}.",
+            problems.join(", ")
+        ))
     }
 }
 
@@ -568,8 +667,16 @@ fn replace_with(tmp: &Path, dest: &Path) -> Result<(), String> {
 }
 
 fn place_new(tmp: &Path, dest: &Path) -> Result<PathBuf, String> {
-    let stem = dest.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-    let ext = dest.extension().unwrap_or_default().to_string_lossy().into_owned();
+    let stem = dest
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let ext = dest
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     for n in 1.. {
         let candidate = match n {
             1 => dest.to_path_buf(),
@@ -607,7 +714,11 @@ pub fn names_in(folder: &Path) -> HashSet<String> {
 /// hidden and not ending in `.mp4`, so it's never taken for a finished clip.
 pub fn temp_path(dest: &Path) -> PathBuf {
     let name = dest.file_name().unwrap_or_default().to_string_lossy();
-    dest.with_file_name(format!(".{name}.{}-{}.kreokit-tmp", std::process::id(), unique()))
+    dest.with_file_name(format!(
+        ".{name}.{}-{}.kreokit-tmp",
+        std::process::id(),
+        unique()
+    ))
 }
 
 #[cfg(test)]
@@ -631,9 +742,23 @@ pub(crate) mod tests {
 
     #[test]
     fn the_graph_ends_tagged_with_the_captions_last() {
-        let keyframes = [Keyframe { t_ms: 0, pos: 0.5, jump: false, ease: false }];
-        let crop = Picture::Crop { keyframes: &keyframes, axis: Axis::X };
-        let g = video_graph(crop, (1920, 1080), 0, (30, 1), Some("ass=filename=captions.ass"));
+        let keyframes = [Keyframe {
+            t_ms: 0,
+            pos: 0.5,
+            jump: false,
+            ease: false,
+        }];
+        let crop = Picture::Crop {
+            keyframes: &keyframes,
+            axis: Axis::X,
+        };
+        let g = video_graph(
+            crop,
+            (1920, 1080),
+            0,
+            (30, 1),
+            Some("ass=filename=captions.ass"),
+        );
         assert!(g.starts_with("[0:v]crop=w=608:h=1080:"), "{g}");
         assert!(g.ends_with(
             ",fps=fps=30/1,tpad=stop_mode=clone:stop_duration=1,format=yuv420p,setparams=range=tv:color_primaries=bt709:\
@@ -645,7 +770,9 @@ pub(crate) mod tests {
     }
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("kreokit-clips-export-tests").join(name);
+        let dir = std::env::temp_dir()
+            .join("kreokit-clips-export-tests")
+            .join(name);
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -683,21 +810,44 @@ pub(crate) mod tests {
             ..good_facts(61_000)
         };
         let err = check(&bad, 61_000, rate, true).unwrap_err();
-        for part in ["profile Constrained Baseline", "transfer unknown", "sample rate 44100", "faststart"] {
+        for part in [
+            "profile Constrained Baseline",
+            "transfer unknown",
+            "sample rate 44100",
+            "faststart",
+        ] {
             assert!(err.contains(part), "{err}");
         }
         // A stream shorter than the clip by more than a frame.
-        let short = Facts { video_ms: 60_900, ..good_facts(61_000) };
-        assert!(check(&short, 61_000, rate, false).unwrap_err().contains("picture lasts 60.900"));
+        let short = Facts {
+            video_ms: 60_900,
+            ..good_facts(61_000)
+        };
+        assert!(
+            check(&short, 61_000, rate, false)
+                .unwrap_err()
+                .contains("picture lasts 60.900")
+        );
     }
 
     #[test]
     fn never_passes_a_clip_of_a_minute_or_less_when_it_must_be_over() {
         let rate = (30, 1);
         // Exactly 60.0 s isn't over a minute; neither is 59.99 in one stream.
-        assert!(check(&good_facts(60_000), 60_000, rate, true).unwrap_err().contains("not over 60.0 s"));
-        let one_short = Facts { audio_ms: 59_990, ..good_facts(60_010) };
-        assert!(check(&one_short, 60_010, rate, true).unwrap_err().contains("sound lasts 59.990"));
+        assert!(
+            check(&good_facts(60_000), 60_000, rate, true)
+                .unwrap_err()
+                .contains("not over 60.0 s")
+        );
+        let one_short = Facts {
+            audio_ms: 59_990,
+            ..good_facts(60_010)
+        };
+        assert!(
+            check(&one_short, 60_010, rate, true)
+                .unwrap_err()
+                .contains("sound lasts 59.990")
+        );
         assert_eq!(check(&good_facts(60_010), 60_010, rate, true), Ok(()));
         // Shorts don't need it.
         assert_eq!(check(&good_facts(30_000), 30_000, rate, false), Ok(()));
@@ -715,15 +865,32 @@ pub(crate) mod tests {
             "format": {"duration": "61.013333"}
         });
         let facts = facts_from(&json);
-        assert_eq!((facts.video_ms, facts.audio_ms, facts.container_ms), (61_000, 61_013, 61_013));
+        assert_eq!(
+            (facts.video_ms, facts.audio_ms, facts.container_ms),
+            (61_000, 61_013, 61_013)
+        );
         assert_eq!(facts.sample_rate, 48_000);
-        assert_eq!(check(&Facts { faststart: true, ..facts }, 61_000, (30, 1), true), Ok(()));
+        assert_eq!(
+            check(
+                &Facts {
+                    faststart: true,
+                    ..facts
+                },
+                61_000,
+                (30, 1),
+                true
+            ),
+            Ok(())
+        );
     }
 
     #[test]
     fn picks_encoders_and_reads_progress() {
         let list = " V....D libx264    libx264 H.264\n V....D libopenh264  OpenH264 H.264\n";
-        assert_eq!(pick_from(list, &["h264_mf", "libx264", "libopenh264"]), Ok(vec!["libx264", "libopenh264"]));
+        assert_eq!(
+            pick_from(list, &["h264_mf", "libx264", "libopenh264"]),
+            Ok(vec!["libx264", "libopenh264"])
+        );
         assert!(pick_from("", &["libopenh264"]).is_err());
         assert!(!allowed_encoders(false).contains(&"libx264"));
         assert_eq!(progress_percent("out_time_us=30500000", 61_000), Some(50));
@@ -749,7 +916,13 @@ pub(crate) mod tests {
         let mut names: Vec<String> = names_in(&dir).into_iter().collect();
         names.sort();
         assert_eq!(names, ["talk-clip-01-2.mp4", "talk-clip-01.mp4"]);
-        assert!(temp_path(&dest).file_name().unwrap().to_string_lossy().starts_with(".talk-clip-01.mp4."));
+        assert!(
+            temp_path(&dest)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".talk-clip-01.mp4.")
+        );
     }
 
     fn ffmpeg_ok(args: &[&str]) {
@@ -758,22 +931,49 @@ pub(crate) mod tests {
             .args(args)
             .output()
             .unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     /// A 640×360 test video at `rate` with a 1 kHz beep 3.0–3.2 s into its sound (44.1 kHz,
     /// so the export resamples), the picture `video_s` and the sound `audio_s` long, the
     /// sound starting `audio_delay_s` after the picture.
-    pub(crate) fn make_source(dir: &Path, rate: &str, video_s: f64, audio_s: f64, audio_delay_s: f64) -> PathBuf {
+    pub(crate) fn make_source(
+        dir: &Path,
+        rate: &str,
+        video_s: f64,
+        audio_s: f64,
+        audio_delay_s: f64,
+    ) -> PathBuf {
         let out = dir.join(format!("source-{}.mp4", rate.replace('/', "_")));
         let video = format!("testsrc2=size=640x360:rate={rate}:duration={video_s}");
-        let audio = format!(
-            "aevalsrc='if(between(t,3,3.2),0.5*sin(2*PI*1000*t),0)':s=44100:d={audio_s}"
-        );
+        let audio =
+            format!("aevalsrc='if(between(t,3,3.2),0.5*sin(2*PI*1000*t),0)':s=44100:d={audio_s}");
         let delay = audio_delay_s.to_string();
         ffmpeg_ok(&[
-            "-f", "lavfi", "-i", &video, "-itsoffset", &delay, "-f", "lavfi", "-i", &audio,
-            "-map", "0:v", "-map", "1:a", "-c:v", "mpeg4", "-q:v", "5", "-c:a", "aac",
+            "-f",
+            "lavfi",
+            "-i",
+            &video,
+            "-itsoffset",
+            &delay,
+            "-f",
+            "lavfi",
+            "-i",
+            &audio,
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-c:v",
+            "mpeg4",
+            "-q:v",
+            "5",
+            "-c:a",
+            "aac",
             out.to_str().unwrap(),
         ]);
         out
@@ -784,7 +984,13 @@ pub(crate) mod tests {
     }
 
     /// Exports `in_ms..out_ms` of `video` centre-cropped (with `ass` captions); the facts.
-    fn export(dir: &Path, video: &Path, in_ms: u64, out_ms: u64, ass: Option<&str>) -> (PathBuf, Facts, (u32, u32)) {
+    fn export(
+        dir: &Path,
+        video: &Path,
+        in_ms: u64,
+        out_ms: u64,
+        ass: Option<&str>,
+    ) -> (PathBuf, Facts, (u32, u32)) {
         let info = crate::probe::probe_video(video).unwrap();
         let keyframes = [];
         let job = ClipJob {
@@ -793,7 +999,10 @@ pub(crate) mod tests {
             fps: info.fps,
             in_ms,
             out_ms,
-            picture: Picture::Crop { keyframes: &keyframes, axis: Axis::X },
+            picture: Picture::Crop {
+                keyframes: &keyframes,
+                axis: Axis::X,
+            },
             ass,
             fonts: Some(&fonts()),
         };
@@ -828,8 +1037,13 @@ pub(crate) mod tests {
     fn exports_a_tiktok_ready_clip_with_captions() {
         let dir = temp_dir("ready");
         let video = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/en/hello.mp4");
-        let words = [("Hello", 0, 400), ("there", 500, 900)]
-            .map(|(text, start_ms, end_ms)| crate::style::Word { start_ms, end_ms, text: text.into() });
+        let words = [("Hello", 0, 400), ("there", 500, 900)].map(|(text, start_ms, end_ms)| {
+            crate::style::Word {
+                start_ms,
+                end_ms,
+                text: text.into(),
+            }
+        });
         let caption = crate::style::Segment {
             id: 0,
             start_ms: 0,
@@ -880,11 +1094,19 @@ pub(crate) mod tests {
         let video = make_source(&dir, "25", 10.0, 9.5, 0.5);
         let (from_one, facts, rate) = export(&dir, &video, 1_000, 9_000, None);
         assert_eq!(check(&facts, 8_000, rate, false), Ok(()));
-        assert!(beep_at(&from_one).abs_diff(2_500) <= 30, "{}", beep_at(&from_one));
+        assert!(
+            beep_at(&from_one).abs_diff(2_500) <= 30,
+            "{}",
+            beep_at(&from_one)
+        );
         // From 0:00 the clip starts with silence where the source has no sound yet.
         let (from_zero, facts, rate) = export(&dir, &video, 0, 8_000, None);
         assert_eq!(check(&facts, 8_000, rate, false), Ok(()));
-        assert!(beep_at(&from_zero).abs_diff(3_500) <= 30, "{}", beep_at(&from_zero));
+        assert!(
+            beep_at(&from_zero).abs_diff(3_500) <= 30,
+            "{}",
+            beep_at(&from_zero)
+        );
     }
 
     #[test]
@@ -899,7 +1121,10 @@ pub(crate) mod tests {
             fps: 30.0,
             in_ms: 0,
             out_ms: 20_000,
-            picture: Picture::Crop { keyframes: &keyframes, axis: Axis::X },
+            picture: Picture::Crop {
+                keyframes: &keyframes,
+                axis: Axis::X,
+            },
             ass: None,
             fonts: None,
         };
@@ -917,11 +1142,34 @@ pub(crate) mod tests {
     /// Mean brightness (0–255) of each output row of a gray 1080×1920 frame.
     fn row_means(source: &str, graph: &str) -> Vec<f64> {
         let output = Command::new(crate::ffmpeg::locate("ffmpeg").unwrap())
-            .args(["-v", "error", "-f", "lavfi", "-i", source, "-filter_complex", graph])
-            .args(["-map", "[v]", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                source,
+                "-filter_complex",
+                graph,
+            ])
+            .args([
+                "-map",
+                "[v]",
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                "-",
+            ])
             .output()
             .unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let (w, h) = (OUT.0 as usize, OUT.1 as usize);
         assert_eq!(output.stdout.len(), w * h);
         output
@@ -940,7 +1188,11 @@ pub(crate) mod tests {
         let middle: Vec<f64> = rows[700..1220].to_vec();
         let above: Vec<f64> = rows[0..600].to_vec();
         let below: Vec<f64> = rows[1320..].to_vec();
-        assert!(middle.iter().all(|&v| v > 250.0), "front {:?}", &middle[..3]);
+        assert!(
+            middle.iter().all(|&v| v > 250.0),
+            "front {:?}",
+            &middle[..3]
+        );
         // The copy behind: 70% brightness, the same above and below.
         for v in above.iter().chain(&below) {
             assert!((v - 0.7 * 255.0).abs() < 8.0, "back {v}");

@@ -337,7 +337,9 @@ mod tests {
         let seg = segment(&[("Hi", 0, 300)], 0, 800);
         let ass = to_ass(&[seg], &Style::default(), 1080, 1920);
         assert!(ass.contains("PlayResX: 608\nPlayResY: 1080\n"));
-        assert!(ass.contains("Dialogue: 0,0:00:00.00,0:00:00.30,Default,,0,0,0,,{\\an2\\pos(304,799)}"));
+        assert!(
+            ass.contains("Dialogue: 0,0:00:00.00,0:00:00.30,Default,,0,0,0,,{\\an2\\pos(304,799)}")
+        );
         // The bottom edge sits above the bottom 22% that TikTok, Reels and Shorts cover.
         assert!(799.0 < 1080.0 * (1.0 - 0.22));
     }
