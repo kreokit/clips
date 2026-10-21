@@ -8,7 +8,39 @@
 
 Part of [KreoKit](https://github.com/kreokit), free open-source creator tools.
 
-> 🚧 **Alpha coming soon.** The first test version (v0.1.0-alpha) is being checked before it's published. Watch the repo to hear when it's out.
+## Download
+
+**[All versions on the Releases page →](https://github.com/kreokit/clips/releases)** (currently [v0.1.0-alpha](https://github.com/kreokit/clips/releases/tag/v0.1.0-alpha), an early test version)
+
+| Your computer | Download |
+|---|---|
+| Mac with Apple Silicon (M1, M2, M3, M4…) | [KreoKit.Clips_0.1.0_aarch64.dmg](https://github.com/kreokit/clips/releases/download/v0.1.0-alpha/KreoKit.Clips_0.1.0_aarch64.dmg) |
+| Mac with Intel processor | [KreoKit.Clips_0.1.0_x64.dmg](https://github.com/kreokit/clips/releases/download/v0.1.0-alpha/KreoKit.Clips_0.1.0_x64.dmg) |
+| Windows 10 / 11 | [KreoKit.Clips_0.1.0_x64-setup.exe](https://github.com/kreokit/clips/releases/download/v0.1.0-alpha/KreoKit.Clips_0.1.0_x64-setup.exe) |
+| Linux (any distribution) | [KreoKit.Clips_0.1.0_amd64.AppImage](https://github.com/kreokit/clips/releases/download/v0.1.0-alpha/KreoKit.Clips_0.1.0_amd64.AppImage) |
+| Linux (Debian / Ubuntu) | [KreoKit.Clips_0.1.0_amd64.deb](https://github.com/kreokit/clips/releases/download/v0.1.0-alpha/KreoKit.Clips_0.1.0_amd64.deb) |
+
+Not sure which Mac you have? Apple menu → **About This Mac**: "Chip: Apple M…" means Apple Silicon, "Processor: Intel…" means Intel.
+
+### Installing (the alpha isn't signed yet)
+
+**macOS:** open the `.dmg` and drag **KreoKit Clips** to Applications, then open it. If macOS says it can't verify the app, go to **System Settings → Privacy & Security** (macOS 12: **System Preferences → Security & Privacy → General**) and click **Open Anyway**. If it says the app "is damaged", run this once in Terminal and open it again:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/KreoKit Clips.app"
+```
+
+**Windows:** run the installer. If SmartScreen says "Windows protected your PC", click **More info → Run anyway**.
+
+**Linux:** make the AppImage executable and run it, or install the `.deb`:
+
+```bash
+chmod +x KreoKit.Clips_*.AppImage
+./KreoKit.Clips_*.AppImage
+# or: sudo apt install ./KreoKit.Clips_*_amd64.deb
+```
+
+Found a problem? [Open an issue](https://github.com/kreokit/clips/issues/new/choose) or use **⋯ → Report a problem** in the app.
 
 ## Features
 
