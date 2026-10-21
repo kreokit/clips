@@ -15,7 +15,8 @@ recall, and only ordinary convolutions to convert.
    with padding, as MediaPipe's ImageToTensor does, plus noise and a blank frame) and
    requires the raw outputs to match and the decoded detections (MediaPipe's anchors,
    sigmoid scores, threshold, weighted NMS) to be the same faces.
-3. Writes the file, SHA256SUMS, report.json, report.md, reference.json (the detections, for
+3. Writes the file, blazeface.LICENSE.txt, blazeface.SOURCE.md, SHA256SUMS.txt (the models-v2
+   attachments), report.json, report.md, reference.json (the detections, for
    the Rust detector's tests) and previews/*.jpg (boxes and keypoints drawn on the photos).
 """
 
@@ -305,8 +306,9 @@ def main() -> None:
     ms_per_frame = (time.perf_counter() - start) * 10
 
     passed = all(r["passed"] for r in results) and not facts["nonstandard_domains"]
-    sums = {p.name: sha256(p) for p in [target]}
-    (args.out / "SHA256SUMS").write_text("".join(f"{h}  {n}\n" for n, h in sums.items()))
+    release = release_files(args.out, target, facts)
+    sums = {p.name: sha256(p) for p in [target, *release]}
+    (args.out / "SHA256SUMS.txt").write_text("".join(f"{h}  {n}\n" for n, h in sums.items()))
     report = {
         "passed": passed,
         "source": {"url": SOURCE_URL, "sha256": SOURCE_SHA256, "mediapipe_commit": COMMIT},
@@ -345,6 +347,50 @@ def main() -> None:
     print((args.out / "report.md").read_text())
     if not passed:
         sys.exit("The ONNX file does not match TFLite closely enough (see report.md)")
+
+
+LICENSE_URL = f"https://raw.githubusercontent.com/google-ai-edge/mediapipe/{COMMIT}/LICENSE"
+MODEL_CARD_URL = "https://drive.google.com/file/d/1jpQt8TB1nMFQ49VSSBKdNEdQOygNRvCP/preview"
+
+
+def release_files(out: Path, target: Path, facts: dict) -> list[Path]:
+    """The models-v2 attachments besides the model: licence text and SOURCE.md (named as in
+    models-v1)."""
+    license_file = out / "blazeface.LICENSE.txt"
+    with urllib.request.urlopen(LICENSE_URL) as response:
+        license_file.write_bytes(response.read())
+    if b"Apache License" not in license_file.read_bytes()[:200]:
+        sys.exit(f"{LICENSE_URL} is not the Apache License")
+    source = out / "blazeface.SOURCE.md"
+    source.write_text(
+        f"""# BlazeFace full-range (face detector), converted to ONNX
+
+`{target.name}` is Google MediaPipe's **BlazeFace full-range (dense)** face detector,
+converted from TFLite to ONNX for KreoKit Clips (reframing clips to 9:16). The weights are
+unchanged; only the file format differs.
+
+- **Original:** `face_detection_full_range.tflite`, {SOURCE_URL}
+  (SHA-256 `{SOURCE_SHA256}`, as pinned by MediaPipe's own build in
+  `third_party/external_files.bzl` at commit
+  [`{COMMIT}`](https://github.com/google-ai-edge/mediapipe/tree/{COMMIT}))
+- **Licence:** Apache License 2.0 (`blazeface.LICENSE.txt`, from the MediaPipe repository at
+  that commit). The model card also states Apache License 2.0 and that the model was trained
+  on consented images: "MediaPipe BlazeFace Model Card (Full Range)", Valentin Bazarevsky and
+  Yury Kartynnik, Google, 2021-01-19, {MODEL_CARD_URL}
+- **Paper:** V. Bazarevsky et al., "BlazeFace: Sub-millisecond Neural Face Detection on Mobile
+  GPUs", CVPR Workshop on Computer Vision for AR/VR, 2019. https://arxiv.org/abs/1907.05047
+- **Conversion:** tf2onnx {tf2onnx.__version__} (tensorflow {tf.__version__}, onnx
+  {onnx.__version__}), opset {facts['opset']}, by `scripts/export_blazeface.py` in the
+  "Export BlazeFace" workflow of https://github.com/kreokit/clips, and checked against the
+  TFLite model with onnxruntime {ort.__version__} (raw outputs and decoded faces).
+- **Input:** `input`, float32 [1, 192, 192, 3] (NHWC, RGB in [-1, 1]). **Outputs:** box and
+  keypoint regressors [1, 2304, 16] and score logits [1, 2304, 1], decoded with MediaPipe's
+  SSD anchors (one per cell, stride 4) as in `mediapipe/modules/face_detection`.
+
+Changes: format conversion only (TFLite → ONNX); see the Apache License, section 4(b).
+"""
+    )
+    return [license_file, source]
 
 
 def markdown(report: dict, reference: list[dict]) -> str:
