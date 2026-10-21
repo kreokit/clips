@@ -277,7 +277,11 @@ pub fn export_one(
     );
     let dest = batch.folder.join(format!("{stem}.mp4"));
     let tmp = export::temp_path(&dest);
-    export::encode(&job, &tmp, cancel, on_progress)?;
+    let encoder = export::encode(&job, &tmp, cancel, on_progress)?;
+    if cfg!(debug_assertions) {
+        // Shows in the `pnpm tauri dev` terminal (e.g. with KREOKIT_DEV_ENCODER).
+        eprintln!("export: {} encoded with {encoder}", dest.display());
+    }
     let over_a_minute = batch.tiktok && length_ms >= TIKTOK_ELIGIBLE_MS;
     let checked = export::probe_output(&tmp).and_then(|facts| {
         export::check(

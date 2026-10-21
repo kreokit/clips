@@ -129,15 +129,66 @@ fn allowed_encoders(dev_build: bool) -> Vec<&'static str> {
     encoders
 }
 
-/// The allowed encoders this FFmpeg has, in order of preference.
-fn pick_encoders(ffmpeg: &Path) -> Result<Vec<&'static str>, String> {
+/// Which encoders an export may try.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncoderChoice {
+    /// This build's order: [`allowed_encoders`] (libx264 only in debug builds).
+    Default,
+    /// The release builds' order, also in a debug build (no libx264).
+    Release,
+    /// Exactly this encoder, no fallback.
+    Only(&'static str),
+}
+
+/// Development aid (debug builds only): `KREOKIT_DEV_ENCODER` picks the encoders, to test
+/// the release path with a dev build. `release` = the release order (e.g. VideoToolbox,
+/// then OpenH264 on macOS, never libx264); `videotoolbox`, `mf`, `openh264` or `x264` =
+/// only that encoder, no fallback. Release builds ignore it.
+pub const DEV_ENCODER_VAR: &str = "KREOKIT_DEV_ENCODER";
+
+/// Reads [`DEV_ENCODER_VAR`] (unset or empty: [`EncoderChoice::Default`]).
+pub fn parse_choice(value: &str) -> Result<EncoderChoice, String> {
+    Ok(match value.trim().to_lowercase().as_str() {
+        "" | "default" => EncoderChoice::Default,
+        "release" => EncoderChoice::Release,
+        "videotoolbox" | "h264_videotoolbox" | "vt" => EncoderChoice::Only("h264_videotoolbox"),
+        "mf" | "h264_mf" => EncoderChoice::Only("h264_mf"),
+        "openh264" | "libopenh264" => EncoderChoice::Only("libopenh264"),
+        "x264" | "libx264" => EncoderChoice::Only("libx264"),
+        other => {
+            return Err(format!(
+                "{DEV_ENCODER_VAR}={other} isn't known: use release, videotoolbox, mf, openh264 or x264."
+            ));
+        }
+    })
+}
+
+/// The choice for this run: the dev variable in debug builds, else this build's order.
+pub fn current_choice() -> Result<EncoderChoice, String> {
+    if !cfg!(debug_assertions) {
+        return Ok(EncoderChoice::Default);
+    }
+    parse_choice(&std::env::var(DEV_ENCODER_VAR).unwrap_or_default())
+}
+
+/// The encoders `choice` allows, in order.
+fn candidates(choice: EncoderChoice, dev_build: bool) -> Vec<&'static str> {
+    match choice {
+        EncoderChoice::Default => allowed_encoders(dev_build),
+        EncoderChoice::Release => allowed_encoders(false),
+        EncoderChoice::Only(encoder) => vec![encoder],
+    }
+}
+
+/// The encoders `choice` allows that this FFmpeg has, in order of preference.
+fn pick_encoders(ffmpeg: &Path, choice: EncoderChoice) -> Result<Vec<&'static str>, String> {
     let output = Command::new(ffmpeg)
         .args(["-hide_banner", "-encoders"])
         .output()
         .map_err(|e| format!("failed to run {}: {e}", ffmpeg.display()))?;
     pick_from(
         &String::from_utf8_lossy(&output.stdout),
-        &allowed_encoders(cfg!(debug_assertions)),
+        &candidates(choice, cfg!(debug_assertions)),
     )
 }
 
@@ -184,16 +235,28 @@ impl ClipJob<'_> {
     }
 }
 
-/// Encodes `job` into `output` (an MP4 whatever its name). `on_progress` gets 0–100. On
-/// error or cancel nothing is left at `output`.
+/// Encodes `job` into `output` (an MP4 whatever its name) with this run's encoders
+/// ([`current_choice`]). `on_progress` gets 0–100. Returns the encoder used. On error or
+/// cancel nothing is left at `output`.
 pub fn encode(
     job: &ClipJob,
     output: &Path,
     cancel: &AtomicBool,
+    on_progress: impl FnMut(u32),
+) -> Result<&'static str, String> {
+    encode_with(job, output, current_choice()?, cancel, on_progress)
+}
+
+/// [`encode`] with the encoders `choice` allows.
+pub fn encode_with(
+    job: &ClipJob,
+    output: &Path,
+    choice: EncoderChoice,
+    cancel: &AtomicBool,
     mut on_progress: impl FnMut(u32),
-) -> Result<(), String> {
+) -> Result<&'static str, String> {
     let ffmpeg = ffmpeg::locate("ffmpeg")?;
-    let encoders = pick_encoders(&ffmpeg)?;
+    let encoders = pick_encoders(&ffmpeg, choice)?;
     // Each export gets its own folder for the script and a copy of the fonts, and FFmpeg
     // runs inside it, so the filter names only plain relative paths (no escaping of ':'
     // and '\' in Windows paths).
@@ -226,7 +289,7 @@ pub fn encode(
                 cancel,
                 &mut on_progress,
             ) {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(*encoder),
                 Err(attempt) if !attempt.started && attempt.message != CANCELLED => {
                     failures.push(format!("{encoder}: {}", attempt.message));
                     let _ = fs::remove_file(output);
@@ -639,6 +702,100 @@ pub fn check(
     }
 }
 
+/// The export part of `--self-test` (milestone 6, decided 2026-10-21): a 3 s synthetic
+/// video (picture and 44.1 kHz sound) made with FFmpeg in `work_dir`, a 2 s clip of it
+/// with a caption exported with the **release** encoders (never libx264), read back with
+/// ffprobe and checked like every export (High profile, yuv420p, faststart, BT.709, 48 kHz,
+/// lengths). Returns a one-line summary naming the encoder.
+#[cfg_attr(not(test), allow(dead_code))] // `--self-test` (milestone 6)
+pub fn self_check(work_dir: &Path, fonts: Option<&Path>) -> Result<String, String> {
+    use crate::style::{Segment, Style, Word};
+    fs::create_dir_all(work_dir)
+        .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
+    let source = work_dir.join("self-test-source.mp4");
+    let ffmpeg = ffmpeg::locate("ffmpeg")?;
+    let made = Command::new(&ffmpeg)
+        .args([
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1280x720:rate=30:duration=3",
+        ])
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=44100:duration=3",
+        ])
+        .args(["-c:v", "mpeg4", "-q:v", "5", "-c:a", "aac", "-shortest"])
+        .arg(&source)
+        .output()
+        .map_err(|e| format!("failed to run {}: {e}", ffmpeg.display()))?;
+    if !made.status.success() {
+        return Err(format!(
+            "cannot make the test video: {}",
+            String::from_utf8_lossy(&made.stderr).trim()
+        ));
+    }
+    let info = crate::probe::probe_video(&source)?;
+    let caption = Segment {
+        id: 0,
+        start_ms: 0,
+        end_ms: 1500,
+        text: "Self test".into(),
+        words: vec![
+            Word {
+                start_ms: 0,
+                end_ms: 600,
+                text: "Self".into(),
+            },
+            Word {
+                start_ms: 700,
+                end_ms: 1300,
+                text: "test".into(),
+            },
+        ],
+    };
+    let ass = crate::ass::to_ass(&[caption], &Style::default(), OUT.0, OUT.1);
+    let keyframes = [];
+    let job = ClipJob {
+        video: &source,
+        source: (info.width, info.height),
+        fps: info.fps,
+        in_ms: 500,
+        out_ms: 2_500,
+        picture: Picture::Crop {
+            keyframes: &keyframes,
+            axis: Axis::X,
+        },
+        ass: Some(&ass),
+        fonts,
+    };
+    let out = work_dir.join("self-test-clip.mp4");
+    let encoder = encode_with(
+        &job,
+        &out,
+        EncoderChoice::Release,
+        &AtomicBool::new(false),
+        |_| {},
+    )?;
+    let facts = probe_output(&out)?;
+    check(&facts, job.length_ms(), output_rate(info.fps), false)
+        .map_err(|e| format!("{encoder}: {e}"))?;
+    Ok(format!(
+        "export: {encoder}, {}×{} H.264 {} {}, faststart, {} s",
+        facts.width,
+        facts.height,
+        facts.profile,
+        facts.pix_fmt,
+        secs(facts.container_ms)
+    ))
+}
+
 /// Moves the finished temporary file `tmp` to `dest`. With `replace` an existing file is
 /// replaced; otherwise it is never touched: the clip gets the first free name of
 /// `dest`, `dest-2`, `dest-3`… (a file can appear while the export runs). The temporary
@@ -895,6 +1052,60 @@ pub(crate) mod tests {
         assert!(!allowed_encoders(false).contains(&"libx264"));
         assert_eq!(progress_percent("out_time_us=30500000", 61_000), Some(50));
         assert_eq!(progress_percent("out_time_us=N/A", 61_000), None);
+    }
+
+    #[test]
+    fn the_dev_variable_picks_the_encoders() {
+        assert_eq!(parse_choice(""), Ok(EncoderChoice::Default));
+        assert_eq!(parse_choice(" Release "), Ok(EncoderChoice::Release));
+        assert_eq!(
+            parse_choice("videotoolbox"),
+            Ok(EncoderChoice::Only("h264_videotoolbox"))
+        );
+        assert_eq!(
+            parse_choice("openh264"),
+            Ok(EncoderChoice::Only("libopenh264"))
+        );
+        assert!(
+            parse_choice("nvenc")
+                .unwrap_err()
+                .contains("KREOKIT_DEV_ENCODER=nvenc")
+        );
+        // The release order never has libx264, even in a debug build.
+        assert!(!candidates(EncoderChoice::Release, true).contains(&"libx264"));
+        assert_eq!(
+            candidates(EncoderChoice::Release, true),
+            allowed_encoders(false)
+        );
+        assert!(candidates(EncoderChoice::Default, true).contains(&"libx264"));
+        assert_eq!(
+            candidates(EncoderChoice::Only("h264_videotoolbox"), true),
+            ["h264_videotoolbox"]
+        );
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                allowed_encoders(false),
+                ["h264_videotoolbox", "libopenh264"]
+            );
+        }
+    }
+
+    /// The `--self-test` export with the release encoders. macOS only here: on Linux the
+    /// release encoder is OpenH264, and CI's FFmpeg 4.4 can't make High profile with it
+    /// (release builds bundle FFmpeg 9, checked by the release workflow's self-test).
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "needs FFmpeg"]
+    fn self_check_exports_with_the_release_encoder() {
+        let dir = temp_dir("self-check");
+        let fonts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/fonts");
+        let summary = self_check(&dir, Some(&fonts)).unwrap();
+        println!("{summary}");
+        assert!(
+            summary
+                .starts_with("export: h264_videotoolbox, 1080×1920 H.264 High yuv420p, faststart"),
+            "{summary}"
+        );
     }
 
     #[test]
