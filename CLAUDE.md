@@ -102,7 +102,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 - **Probe** (`probe.rs`): duration, **display** size (90°/270° rotation swaps width and height; `rotation` is clockwise), fps, `has_audio`; cover art is not a video stream. Importing a video without sound is refused (nothing to transcribe)
 - **Projects** (`projects.rs`, `src/store/project.ts`): `open_video` (create or reopen by id; a located video is found by path + fingerprint), `open_project`, `save_project` (autosave), `locate_video` (refuses a video whose size differs or length differs by more than 1 s), `remove_project`, `project_thumbnail` (`<project>/thumbnail.jpg`, served through the asset protocol, scope `$APPDATA/projects/*/thumbnail.jpg`). Ids from the webview are checked to be 16 hex digits. The frontend autosave (`src/lib/autosave.ts`) waits 600 ms, never overlaps saves, and is flushed before switching projects and when the window closes
 - **Project screen** (`ProjectView.tsx`): a placeholder with the probed facts and the editable project name, until milestones 2–3 replace it
-- **Dev aid:** `KREOKIT_DEV_OPEN=/path/video.mp4 pnpm tauri dev` opens that video at startup (debug builds only)
+- **Dev aid:** `KREOKIT_DEV_OPEN=/path/video.mp4 pnpm tauri dev` opens that video at startup, and `KREOKIT_DEV_CLIP=<clip id>` also opens that clip in the editor (debug builds only)
 - **CI** (`ci.yml`): Linux runs everything incl. the FFmpeg tests (`--include-ignored`), cargo-deny and the THIRD-PARTY check; macOS and Windows run the frontend build and tests and the Rust tests
 
 ## Transcription (milestone 2)

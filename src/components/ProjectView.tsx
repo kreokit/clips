@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { ArrowLeft, RotateCcw, Trash2 } from "lucide-react";
 import { applyScores, forgetSpokenText, scoreClips } from "../lib/clips";
 import { faceQueue } from "../lib/faces";
@@ -47,6 +48,13 @@ export function ProjectView() {
   // A new key remounts the Transcribe panel, so it reads the (now missing) transcript.
   const [panelKey, setPanelKey] = useState(0);
   const onRunningChange = useCallback((r: boolean) => setRunning(r), []);
+  // Development aid: KREOKIT_DEV_CLIP opens that clip in the editor once.
+  useEffect(() => {
+    invoke<number | null>("dev_startup_clip").then((id) => {
+      const p = useProject.getState().project;
+      if (id !== null && p?.clips.some((c) => c.id === id)) setEditing({ id, order: p.clips.map((c) => c.id) });
+    });
+  }, []);
   // Leaving a project stops its face analysis (finished blocks stay cached).
   const projectId = project?.id;
   useEffect(

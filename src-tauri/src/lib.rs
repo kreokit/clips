@@ -594,6 +594,16 @@ fn dev_startup_video() -> Option<String> {
         .filter(|p| !p.is_empty())
 }
 
+/// Development aid: a clip to open in the editor at startup (with `KREOKIT_DEV_OPEN`),
+/// from `KREOKIT_DEV_CLIP`. Always `None` in release builds.
+#[tauri::command]
+fn dev_startup_clip() -> Option<u32> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var("KREOKIT_DEV_CLIP").ok()?.trim().parse().ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -629,7 +639,8 @@ pub fn run() {
             cpu_support,
             quit_app,
             report_problem,
-            dev_startup_video
+            dev_startup_video,
+            dev_startup_clip
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
