@@ -833,6 +833,19 @@ fn dev_startup_clip() -> Option<u32> {
     std::env::var("KREOKIT_DEV_CLIP").ok()?.trim().parse().ok()
 }
 
+/// Development aid: Export all uses this folder instead of asking (`KREOKIT_DEV_EXPORT_DIR`),
+/// so the export can be checked without the system's folder picker. Always `None` in
+/// release builds.
+#[tauri::command]
+fn dev_export_folder() -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var("KREOKIT_DEV_EXPORT_DIR")
+        .ok()
+        .filter(|d| Path::new(d).is_dir())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -877,7 +890,8 @@ pub fn run() {
             quit_app,
             report_problem,
             dev_startup_video,
-            dev_startup_clip
+            dev_startup_clip,
+            dev_export_folder
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

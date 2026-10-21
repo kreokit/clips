@@ -1,0 +1,73 @@
+/* Export all: the clips to export, options, progress, results. */
+
+.export-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 320px;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.export-rows li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.export-rows .ui-checkbox-row {
+  font-variant-numeric: tabular-nums;
+}
+
+.export-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: 28px;
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-warning);
+}
+
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.export-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font: var(--text-meta);
+  color: var(--color-text-2);
+}
+
+.export-files,
+.export-failures {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-6);
+  font: var(--text-meta);
+  font-weight: 400;
+  color: var(--color-text-2);
+  overflow-wrap: anywhere;
+}
+
+.export-failures strong {
+  color: var(--color-text);
+}
+
+.export-space-warning {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  color: var(--color-warning);
+}
+
+.export-space-warning svg {
+  flex: none;
+  margin-top: 3px;
+}

@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Check,
   ChevronLeft,
+  Download,
   ChevronRight,
   Info,
   Magnet,
@@ -73,6 +74,7 @@ import { useProject } from "../store/project";
 import { Button, IconButton, Popover, Tabs, toast } from "../ui";
 import { CaptionOverlay, OUTPUT, SafeAreaOverlay } from "./CaptionOverlay";
 import { CaptionsPanel } from "./CaptionsPanel";
+import { ExportDialog } from "./ExportDialog";
 import { WhyThisClip } from "./ClipsBoard";
 import { FramingPanel } from "./FramingPanel";
 import "../styles/editor.css";
@@ -140,6 +142,7 @@ export function ClipEditor({
   // Counts loaded / sought frames, so the overview redraws even when the time is the same.
   const [frames, setFrames] = useState(0);
   const [sideTab, setSideTab] = useState<SideTab>("framing");
+  const [exporting, setExporting] = useState(false);
   const [showSafeArea, setShowSafeArea] = useState(loadShowSafeArea);
   // The clip's captions (saved in/out points, project word fixes) and the style as this
   // clip shows it: shrunk if its longest caption is too wide, kept inside the frame.
@@ -359,7 +362,7 @@ export function ClipEditor({
   // Keys, unless typing or on a button (Space would press it).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || !shown || !text) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || !shown || !text || exporting) return;
       const target = e.target as HTMLElement;
       if (target.closest("input, textarea, select, [contenteditable]")) return;
       if (e.code === "Space") {
@@ -384,7 +387,7 @@ export function ClipEditor({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shown, text, durationMs, currentMs, index, order, onOpen, onClose, playClip, commit, setStatus, newClipHere]);
+  }, [shown, text, durationMs, currentMs, index, order, onOpen, onClose, playClip, commit, setStatus, newClipHere, exporting]);
 
   const source = { width: project.video.width, height: project.video.height };
   const auto = pathState.kind === "ready" ? pathState.path : null;
@@ -498,6 +501,9 @@ export function ClipEditor({
             </Popover>
           </>
         )}
+        <Button variant="secondary" size="sm" icon={Download} onClick={() => setExporting(true)} title="Export this clip">
+          Export
+        </Button>
         {clip.source === "manual" ? (
           <Button variant="secondary" size="sm" icon={Trash2} onClick={remove}>
             Delete
@@ -620,6 +626,7 @@ export function ClipEditor({
         />
       </div>
 
+      {exporting && <ExportDialog project={project} only={clip.id} onClose={() => setExporting(false)} />}
       <ClipTimeline
         projectId={project.id}
         clipKey={clipId}

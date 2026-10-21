@@ -7,6 +7,9 @@ import { layout } from "./layout";
 import { transformed } from "./overlay";
 import type { Position, Segment, Style } from "./types";
 
+/** The exported clip's frame (src-tauri export.rs `OUT`). */
+export const OUTPUT = { width: 1080, height: 1920 };
+
 /** Style sizes and ASS scripts use a frame this tall (ass.rs REFERENCE_HEIGHT). */
 export const REFERENCE_HEIGHT = 1080;
 /**

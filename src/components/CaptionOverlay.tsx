@@ -1,13 +1,13 @@
 import { useRef, useState } from "react";
 import { GripHorizontal } from "lucide-react";
 import { POP_MS, POP_SCALE, ghostFrame, outlineShadow, overlayFrame } from "../lib/captions/overlay";
-import { Anchor, Guides, REFERENCE_HEIGHT, anchorPoint, dragAnchor, placement, playResX } from "../lib/captions/position";
+import { Anchor, Guides, OUTPUT, REFERENCE_HEIGHT, anchorPoint, dragAnchor, placement, playResX } from "../lib/captions/position";
 import { SAFE_AREA } from "../lib/captions/safeArea";
 import { emPerFontSize } from "../lib/captions/textMetrics";
 import type { Segment, Style } from "../lib/captions/types";
 
-/** The exported frame; captions are placed on it as in the ASS script (608 × 1080). */
-export const OUTPUT = { width: 1080, height: 1920 };
+export { OUTPUT };
+/** Captions are placed on the exported frame as in its ASS script (608 × 1080). */
 const SCRIPT_W = playResX(OUTPUT.width, OUTPUT.height);
 
 /**

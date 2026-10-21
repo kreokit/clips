@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { AlertTriangle, Check, Film, Info, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Download, Film, Info, Pencil, Plus, RotateCcw, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { clipAround } from "../lib/clipEdit";
 import {
   Clip,
@@ -40,6 +40,7 @@ import { limiter } from "../lib/queue";
 import { normalized } from "../lib/transcription";
 import { useProject } from "../store/project";
 import { Button, Field, IconButton, NumberField, Popover, ProgressBar, Segmented, Select, Tabs } from "../ui";
+import { ExportDialog } from "./ExportDialog";
 import "../styles/clips.css";
 
 /** Two thumbnails at a time (each is an FFmpeg run). */
@@ -68,6 +69,7 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
   const [error, setError] = useState<string | null>(null);
   const [why, setWhy] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   // Kept clips: faces found in the background, for their crop on the card.
   const faces = useKeptFaces(project.id, project.clips);
   // The crop's size and axis, from the video's size.
@@ -208,8 +210,19 @@ export function ClipsBoard({ project, onEdit }: { project: Project; onEdit?: (id
           >
             {finderSummary(project.finder)}
           </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Download}
+            onClick={() => setExporting(true)}
+            disabled={counts.kept === 0}
+            title={counts.kept === 0 ? "Keep the clips you want first (K)" : "Export the kept clips"}
+          >
+            Export all
+          </Button>
         </div>
       </div>
+      {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} />}
       <Popover open={settingsOpen} onClose={() => setSettingsOpen(false)} anchor={settingsButton} align="end" className="finder-popover">
         <FinderPanel
           finder={project.finder}
