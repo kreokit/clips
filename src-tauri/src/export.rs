@@ -36,7 +36,8 @@ pub enum Picture<'a> {
         axis: Axis,
     },
     /// The whole frame, over a blurred, darkened copy of itself (the editor's preview:
-    /// a 54×96 copy, blurred and at 70% brightness).
+    /// a 54×96 copy, blurred and at 70% brightness). Two `avgblur` passes, not `boxblur`:
+    /// boxblur is GPL-only, so release builds' LGPL FFmpeg doesn't have it.
     FitBlur,
 }
 
@@ -90,7 +91,7 @@ pub fn video_graph(
         Picture::FitBlur => format!(
             "[0:v]split=2[bg][fg];\
              [bg]scale=54:96:force_original_aspect_ratio=increase:flags=area,crop=54:96,\
-             colorchannelmixer=rr=0.7:gg=0.7:bb=0.7,scale=270:480:flags=bicubic,boxblur=8:2,\
+             colorchannelmixer=rr=0.7:gg=0.7:bb=0.7,scale=270:480:flags=bicubic,avgblur=sizeX=8,avgblur=sizeX=8,\
              scale={w}:{h}:flags=bicubic[back];\
              [fg]scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[front];\
              [back][front]overlay=x=(W-w)/2:y=(H-h)/2,setsar=1"
@@ -918,6 +919,43 @@ pub(crate) mod tests {
         assert_eq!(output_rate(f64::NAN), (30, 1));
     }
 
+    /// FFmpeg 9.0.2's GPL-only filters (`grep 'filter_deps="gpl' configure`).
+    const GPL_FILTERS: &[&str] = &[
+        "blackframe",
+        "boxblur",
+        "boxblur_opencl",
+        "colormatrix",
+        "cover_rect",
+        "cropdetect",
+        "delogo",
+        "eq",
+        "find_rect",
+        "fspp",
+        "histeq",
+        "hqdn3d",
+        "interlace",
+        "kerndeint",
+        "mcdeint",
+        "mpdecimate",
+        "mptestsrc",
+        "nnedi",
+        "owdenoise",
+        "perspective",
+        "phase",
+        "pp7",
+        "pullup",
+        "repeatfields",
+        "sab",
+        "signature",
+        "smartblur",
+        "spp",
+        "stereo3d",
+        "super2xsai",
+        "tinterlace",
+        "uspp",
+        "vaguedenoiser",
+    ];
+
     #[test]
     fn the_graph_ends_tagged_with_the_captions_last() {
         let keyframes = [Keyframe {
@@ -945,6 +983,18 @@ pub(crate) mod tests {
         let fit = video_graph(Picture::FitBlur, (1920, 1080), 0, (25, 1), None);
         assert!(fit.contains("overlay=x=(W-w)/2:y=(H-h)/2"));
         assert!(fit.ends_with("colorspace=bt709[v]"));
+        // Release builds bundle an LGPL FFmpeg: none of FFmpeg 9.0's GPL-only filters
+        // (`*_filter_deps="gpl…"` in its configure) may appear.
+        for graph in [&g, &fit] {
+            for gpl in GPL_FILTERS {
+                assert!(
+                    !graph
+                        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                        .any(|word| word == *gpl),
+                    "{gpl} in {graph}"
+                );
+            }
+        }
     }
 
     fn temp_dir(name: &str) -> PathBuf {
