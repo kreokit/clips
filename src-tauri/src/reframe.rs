@@ -458,6 +458,29 @@ pub(crate) mod tests {
         assert_eq!(position_at(&[], 5), 0.5);
     }
 
+    /// The cases the editor's preview (`src/lib/reframe.test.ts`) checks too.
+    #[test]
+    fn shared_path_cases() {
+        #[derive(Deserialize)]
+        struct Case {
+            name: String,
+            keyframes: Vec<Keyframe>,
+            at: Vec<(u64, f32)>,
+        }
+        #[derive(Deserialize)]
+        struct Cases {
+            cases: Vec<Case>,
+        }
+        let cases: Cases =
+            serde_json::from_str(include_str!("../../fixtures/reframe/path-cases.json")).unwrap();
+        for case in cases.cases {
+            for (t, want) in case.at {
+                let got = position_at(&case.keyframes, t);
+                assert!((got - want).abs() < 1e-6, "{} at {t}: {got} ≠ {want}", case.name);
+            }
+        }
+    }
+
     #[test]
     fn a_swaying_face_holds_the_crop_still() {
         // ±12 px of 640 (about 6% of the crop width) at 1 Hz, plus a one-off detection jump.

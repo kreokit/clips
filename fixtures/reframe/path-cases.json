@@ -1,0 +1,48 @@
+{
+  "_comment": "Crop path positions, checked by src-tauri/src/reframe.rs and src/lib/reframe.test.ts so the editor's preview and the export draw the same path. ease(k) is smootherstep: ease(0.25) = 0.103515625, ease(0.75) = 0.896484375.",
+  "cases": [
+    {
+      "name": "no keyframes: the centre",
+      "keyframes": [],
+      "at": [[0, 0.5], [5000, 0.5]]
+    },
+    {
+      "name": "constant before the first and after the last",
+      "keyframes": [{ "t_ms": 1000, "pos": 0.2, "jump": false, "ease": false }],
+      "at": [[0, 0.2], [1000, 0.2], [9000, 0.2]]
+    },
+    {
+      "name": "linear between plain keyframes",
+      "keyframes": [
+        { "t_ms": 1000, "pos": 0.2, "jump": false, "ease": false },
+        { "t_ms": 2000, "pos": 0.4, "jump": false, "ease": false }
+      ],
+      "at": [[1250, 0.25], [1500, 0.3], [2000, 0.4]]
+    },
+    {
+      "name": "a jump holds until its time, then cuts",
+      "keyframes": [
+        { "t_ms": 1000, "pos": 0.2, "jump": false, "ease": false },
+        { "t_ms": 2000, "pos": 0.8, "jump": true, "ease": false }
+      ],
+      "at": [[1999, 0.2], [2000, 0.8], [2500, 0.8]]
+    },
+    {
+      "name": "an eased move follows smootherstep",
+      "keyframes": [
+        { "t_ms": 0, "pos": 0.3, "jump": false, "ease": false },
+        { "t_ms": 4000, "pos": 0.7, "jump": false, "ease": true }
+      ],
+      "at": [[1000, 0.341406250], [2000, 0.5], [3000, 0.658593750], [4000, 0.7]]
+    },
+    {
+      "name": "two keyframes at the same time: the later one from then",
+      "keyframes": [
+        { "t_ms": 1000, "pos": 0.2, "jump": false, "ease": false },
+        { "t_ms": 1000, "pos": 0.6, "jump": false, "ease": false },
+        { "t_ms": 2000, "pos": 0.6, "jump": false, "ease": false }
+      ],
+      "at": [[999, 0.2], [1000, 0.6], [1500, 0.6]]
+    }
+  ]
+}
