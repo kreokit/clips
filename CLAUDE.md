@@ -1,7 +1,7 @@
 # KreoKit Clips: build spec for Claude Code
 
 Read this before every task. It is the source of truth for scope and architecture.
-**Status (2026-10-21):** Milestones 1 (Scaffold), 2 (Transcribe long videos) and 3 (moment finder + clips board, with platform presets) are done and tested. Next: milestone 4 (Reframe), once the user says go.
+**Status (2026-10-21):** Milestones 1 (Scaffold), 2 (Transcribe long videos) and 3 (moment finder + clips board, with platform presets) are done and tested. Milestone 4 (Reframe) started 2026-10-21 (the user said go; decisions under "Reframe").
 App #3 of the KreoKit suite. App #1 is KreoKit Captions (`kreokit/captions`), app #2 is KreoKit Cutout (`kreokit/cutout`). Reuse both wherever possible.
 
 ## What we are building
@@ -69,6 +69,13 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 - Smooth the crop path (no jitter; limit speed; hold position during short gaps), keep the face in the upper-middle third.
 - Fallbacks: center crop, or "fit with blurred background" (letterbox inside 9:16).
 - Manual override: drag the crop window on a keyframe.
+- **Decided 2026-10-21 (user, M4 plan):**
+  - Speaker: the biggest / most central face, switching only with hysteresis (a new speaker holds ≥ 2 s). Mouth movement is a time-boxed, measured experiment on the two-face fixture: if it doesn't clearly beat the simple rule, it stays on a branch (like Cutout's guided-filter experiment).
+  - Speaker change and camera cuts: **cut, never pan**.
+  - **No zoom in v0.1:** the crop is the full source height at 9:16, moving only sideways. A source under 1080 px tall shows a small note in the editor: "Low-resolution source; the vertical clip will look soft". Backlog: zoom, split screen for two speakers.
+  - Face analysis runs in the background for kept clips and immediately for the clip open in the editor; **never at the same time as transcription**, and it stops when the app closes.
+  - Fixtures: found on Pexels/Pixabay, small files, licence + source URL per file in `fixtures/LICENSES.md`; no people from movies/TV/YouTube.
+  - Stop after step 1 (model licence check + conversion `report.md`) for the user's OK before publishing `models-v2`. **`models-v2` must not be marked "latest"** (app releases stay latest). Push after each step.
 
 ## Projects (decided 2026-10-19)
 
