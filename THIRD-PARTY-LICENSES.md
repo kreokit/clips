@@ -37,12 +37,45 @@ On Windows, ONNX Runtime is linked against `DirectML.dll`. KreoKit Clips does **
 that file: the copy that comes with Windows 10 (version 1903 or later) and Windows 11 is
 used, and face detection runs on the CPU only.
 
-## FFmpeg (separate program)
+## FFmpeg (bundled program)
 
-Development builds use the FFmpeg installed on the computer. Release builds (milestone 6)
-will bundle an **LGPL** FFmpeg build (no GPL or non-free parts, no libx264/libx265) as a
-separate program, as KreoKit Captions does; its exact source and licence will be listed
-here.
+KreoKit Clips bundles `ffmpeg` and `ffprobe` from **FFmpeg 9.0.2** as separate programs
+(sidecars); the app runs them, it does not link to them.
+
+- Licence: **GNU Lesser General Public License** (LGPL-2.1-or-later for the macOS builds,
+  LGPL-3.0-or-later for the Windows and Linux builds). No GPL or non-free components are
+  enabled. Full text: `licenses/FFMPEG-LICENSE.txt` in the app, and
+  <https://www.gnu.org/licenses/lgpl-3.0.html>.
+- Source code: FFmpeg <https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz>. The exact
+  builds, their sources and SHA-256 checksums are listed in
+  [src-tauri/binaries/README.md](src-tauri/binaries/README.md):
+  - Windows / Linux: BtbN FFmpeg-Builds, LGPL variant, release `autobuild-2026-09-30-13-08`
+    (revision `n9.0.2-17-g2a571b6068`), <https://github.com/BtbN/FFmpeg-Builds>
+  - macOS: built from source by `scripts/build-ffmpeg-macos.sh` in this repository
+- You may replace the bundled FFmpeg with your own build: put it next to the app's
+  executable under the same name, or point `KREOKIT_FFMPEG` / `KREOKIT_FFPROBE` at it.
+
+Libraries built into the bundled FFmpeg include:
+
+| Library | Licence | Source |
+|---|---|---|
+| libass | ISC | <https://github.com/libass/libass> |
+| FreeType | FreeType Licence (FTL) | <https://freetype.org> |
+| FriBidi | LGPL-2.1-or-later | <https://github.com/fribidi/fribidi> |
+| HarfBuzz | MIT ("Old MIT") | <https://github.com/harfbuzz/harfbuzz> |
+| Fontconfig (Windows / Linux builds) | MIT-style | <https://www.freedesktop.org/wiki/Software/fontconfig/> |
+| OpenH264 (Windows / Linux builds) | BSD-2-Clause | <https://github.com/cisco/openh264> |
+
+The Windows and Linux builds contain further LGPL-compatible libraries enabled by BtbN's
+LGPL variant; the complete list is in `ffmpeg -buildconf` and in BtbN's build scripts.
+
+Portions of this software are copyright © The FreeType Project (https://freetype.org).
+All rights reserved.
+
+OpenH264 in the Windows and Linux FFmpeg builds is compiled from source. Its BSD licence
+covers the code; Cisco's H.264 patent licence applies only to binaries distributed by
+Cisco, so it does not extend to this build. KreoKit Clips uses OpenH264 on Linux, and on Windows only when Media Foundation's H.264
+encoder is not available.
 
 ## Fonts (bundled)
 
