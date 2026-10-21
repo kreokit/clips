@@ -1,0 +1,1 @@
+This is a short test of the clip maker. The face on the screen moves to one side. Then the picture cuts to someone new. The crop should follow them.

@@ -8,6 +8,9 @@
 #   hello   plain English, for probe, accuracy and timing tests (same clip as KreoKit Captions)
 #   brands  made-up names, for the custom-words test (same clip as KreoKit Captions)
 #   long    a 10.5-minute interview, two voices, from long-script.txt (transcription in parts)
+#
+# And ../selftest/speaker.mp4 + .txt for the release binary's --self-test: the picture of
+# ../reframe/moving-face.mp4 unchanged (its .json truth still applies) with speech over it.
 set -euo pipefail
 
 cd "$(dirname "$0")/../fixtures/en"
@@ -105,3 +108,31 @@ make_long() {
 }
 
 make_long
+
+# The self-test clip: moving-face's picture (copied, not re-encoded) and four sentences
+# from 1 s, padded with silence to the picture's 12 s.
+make_speaker() {
+  local out="../selftest/speaker"
+  if [[ -f "$out.mp4" && "$FORCE" != "--force" ]]; then
+    echo "kept fixtures/selftest/speaker.mp4"
+    return
+  fi
+  mkdir -p ../selftest
+  local text="This is a short test of the clip maker. The face on the screen moves to one side. \
+Then the picture cuts to someone new. The crop should follow them."
+  echo "$text" > "$out.txt"
+  local tmp
+  tmp="$(mktemp -d)"
+  say -v "$VOICE" -o "$tmp/speech.aiff" "$text"
+  ffmpeg -nostdin -y -v error \
+    -i ../reframe/moving-face.mp4 -i "$tmp/speech.aiff" \
+    -filter_complex "[1:a]adelay=1000:all=1,apad[a]" \
+    -map 0:v -map "[a]" -shortest \
+    -c:v copy -c:a aac -b:a 64k -ac 1 -ar 44100 \
+    -movflags +faststart \
+    "$out.mp4"
+  rm -rf "$tmp"
+  echo "wrote fixtures/selftest/speaker.mp4 ($(du -h "$out.mp4" | cut -f1))"
+}
+
+make_speaker
