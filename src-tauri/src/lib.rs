@@ -12,6 +12,7 @@ mod moments;
 mod probe;
 mod projects;
 mod sentences;
+mod tracks;
 mod transcribe;
 mod transcription;
 mod vad;

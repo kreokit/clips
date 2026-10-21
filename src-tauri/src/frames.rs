@@ -173,6 +173,75 @@ impl Histogram {
     }
 }
 
+/// Thumbnail side lengths in [`Thumbnail`].
+const THUMB_W: usize = 32;
+const THUMB_H: usize = 18;
+
+/// A frame's layout: mean brightness of 32×18 cells. Unlike [`Histogram`], it sees a cut
+/// between two cameras in the same room (same colours, everything elsewhere).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Thumbnail(Vec<f32>);
+
+impl Thumbnail {
+    pub fn of(frame: Rgb) -> Self {
+        let mut sums = vec![0.0f32; THUMB_W * THUMB_H];
+        let mut counts = vec![0u32; THUMB_W * THUMB_H];
+        for (i, px) in frame.data.chunks_exact(3).enumerate() {
+            let (x, y) = (i % frame.width, i / frame.width);
+            let cell =
+                (y * THUMB_H / frame.height.max(1)) * THUMB_W + x * THUMB_W / frame.width.max(1);
+            sums[cell] += 0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32;
+            counts[cell] += 1;
+        }
+        Self(
+            sums.iter()
+                .zip(&counts)
+                .map(|(s, &n)| s / n.max(1) as f32 / 255.0)
+                .collect(),
+        )
+    }
+
+    /// Mean absolute brightness difference of the cells, 0 to 1.
+    pub fn distance(&self, other: &Thumbnail) -> f32 {
+        let sum: f32 = self
+            .0
+            .iter()
+            .zip(&other.0)
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        sum / self.0.len().max(1) as f32
+    }
+}
+
+/// A camera cut between two samples, from either signal. Measured on the reframe fixtures
+/// (2026-10-21, `cut_distances`): cuts score thumbnail 0.23–0.39; a big face popping in or
+/// out 0.15 (counts as a cut, harmlessly); a face growing 0.09; a face sliding 0.02; the
+/// real clips without cuts at most 0.002 (histogram 0.007). The histogram alone missed the
+/// two-faces cut (0.17).
+pub const CUT_THUMBNAIL: f32 = 0.12;
+pub const CUT_HISTOGRAM: f32 = 0.3;
+
+/// What [`is_cut`] compares between samples.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Look {
+    histogram: Histogram,
+    thumbnail: Thumbnail,
+}
+
+impl Look {
+    pub fn of(frame: Rgb) -> Self {
+        Self {
+            histogram: Histogram::of(frame),
+            thumbnail: Thumbnail::of(frame),
+        }
+    }
+
+    pub fn is_cut_from(&self, previous: &Look) -> bool {
+        self.thumbnail.distance(&previous.thumbnail) > CUT_THUMBNAIL
+            || self.histogram.distance(&previous.histogram) > CUT_HISTOGRAM
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +451,97 @@ mod tests {
         });
         assert_eq!(result.unwrap_err(), CANCELLED);
         assert_eq!(count, 3);
+    }
+}
+
+#[cfg(test)]
+mod cut_calibration {
+    use super::*;
+
+    /// Prints the largest histogram distances between consecutive samples of each reframe
+    /// fixture: `cargo test --release cut_distances -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn cut_distances() {
+        for name in [
+            "moving-face.mp4",
+            "two-faces.mp4",
+            "podcast-wide.mp4",
+            "talking-head.mp4",
+        ] {
+            let video = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/reframe")
+                .join(name);
+            let info = crate::probe::probe_video(&video).unwrap();
+            let mut previous: Option<(Histogram, Thumbnail)> = None;
+            let mut distances = Vec::new();
+            sample(
+                &video,
+                (info.width, info.height),
+                0,
+                info.duration_ms,
+                &AtomicBool::new(false),
+                |t, frame| {
+                    let now = (Histogram::of(frame), Thumbnail::of(frame));
+                    if let Some((h, th)) = &previous {
+                        distances.push((h.distance(&now.0), th.distance(&now.1), t));
+                    }
+                    previous = Some(now);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            distances.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let top: Vec<String> = distances
+                .iter()
+                .take(5)
+                .map(|(h, th, t)| format!("{t}: hist {h:.3} thumb {th:.3}"))
+                .collect();
+            println!("{name}: {}", top.join(" | "));
+        }
+    }
+
+    /// A cut between the two real clips (two cameras, one creator's studios) is found, and
+    /// nothing else in them is: `cargo test --release a_real_cut_is_found -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_real_cut_is_found() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/reframe");
+        let joined = std::env::temp_dir().join("kreokit-clips-real-cut.mp4");
+        let status = Command::new(ffmpeg::locate("ffmpeg").unwrap())
+            .args(["-v", "error", "-y", "-t", "4", "-i"])
+            .arg(dir.join("podcast-wide.mp4"))
+            .args(["-t", "4", "-i"])
+            .arg(dir.join("talking-head.mp4"))
+            .args([
+                "-filter_complex",
+                "[0:v][1:v]concat=n=2:v=1[v]",
+                "-map",
+                "[v]",
+            ])
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(&joined)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let mut previous: Option<Look> = None;
+        let mut cuts = Vec::new();
+        sample(
+            &joined,
+            (640, 360),
+            0,
+            8000,
+            &AtomicBool::new(false),
+            |t, frame| {
+                let look = Look::of(frame);
+                if previous.as_ref().is_some_and(|p| look.is_cut_from(p)) {
+                    cuts.push(t);
+                }
+                previous = Some(look);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(cuts, [4000]);
     }
 }
