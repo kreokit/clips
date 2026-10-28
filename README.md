@@ -8,6 +8,8 @@
 
 Part of [KreoKit](https://github.com/kreokit), free open-source creator tools.
 
+🌐 **Website: [kreokit.vercel.app/clips](https://kreokit.vercel.app/clips)**: download for your computer and see how to install it.
+
 ## Download
 
 **[All versions on the Releases page →](https://github.com/kreokit/clips/releases)** (currently [v0.1.0-alpha](https://github.com/kreokit/clips/releases/tag/v0.1.0-alpha), an early test version)
