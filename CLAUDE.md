@@ -187,6 +187,7 @@ Show the score breakdown in the UI ("why this clip"), so users trust it and can 
 ## Release checklist
 
 - After publishing, update the kreokit/.github profile README row.
+- After publishing, update the tag and file names in kreokit/website data/apps.json.
 
 ## Tests (our oracle)
 
